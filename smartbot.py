@@ -25,39 +25,43 @@ async def on_ready():
 async def start(ctx):
     user_state[ctx.author.id] = {}
     await ctx.send(
-        "**اختر العملة:**\n" + "\n".join(f"- {symbol}" for symbol in OTC_SYMBOLS)
+        "**اختر العملة من القائمة التالية:**\n" +
+        "\n".join(f"- `{symbol}`" for symbol in OTC_SYMBOLS)
     )
 
 @bot.command()
-async def عملة(ctx, *, symbol):
+async def set_symbol(ctx, symbol: str):
+    if ctx.author.id not in user_state:
+        await ctx.send("اكتب الأمر `!start` أولاً.")
+        return
     if symbol not in OTC_SYMBOLS:
-        await ctx.send("❌ العملة غير موجودة.")
+        await ctx.send("❌ العملة غير صحيحة. اختر من القائمة.")
         return
-    user_state[ctx.author.id]["symbol"] = symbol
-    await ctx.send(f"✅ تم اختيار العملة: `{symbol}`\nالآن اختر الفريم الزمني:\n" +
-                   "\n".join(TIMEFRAMES))
+    user_state[ctx.author.id]['symbol'] = symbol
+    await ctx.send("✅ تم اختيار العملة.\nالآن اختر الفريم الزمني:\n" + "\n".join(f"- `{tf}`" for tf in TIMEFRAMES))
 
 @bot.command()
-async def فريم(ctx, *, timeframe):
+async def set_timeframe(ctx, timeframe: str):
+    if ctx.author.id not in user_state or 'symbol' not in user_state[ctx.author.id]:
+        await ctx.send("❌ يجب أن تختار العملة أولاً باستخدام `!set_symbol`.")
+        return
     if timeframe not in TIMEFRAMES:
-        await ctx.send("❌ الفريم غير مدعوم.")
+        await ctx.send("❌ الفريم غير متاح.")
         return
-    user_state[ctx.author.id]["timeframe"] = timeframe
-    await ctx.send(f"✅ تم اختيار الفريم: `{timeframe}`\nالآن اختر مدة الصفقة:\n" +
-                   "\n".join(DURATIONS))
+    user_state[ctx.author.id]['timeframe'] = timeframe
+    await ctx.send("✅ تم تعيين الفريم الزمني.\nالآن اختر مدة الصفقة:\n" + "\n".join(f"- `{d}`" for d in DURATIONS))
 
 @bot.command()
-async def مدة(ctx, *, duration):
-    if duration not in DURATIONS:
-        await ctx.send("❌ مدة غير صالحة.")
+async def set_duration(ctx, duration: str):
+    if ctx.author.id not in user_state or 'timeframe' not in user_state[ctx.author.id]:
+        await ctx.send("❌ يجب أن تختار الفريم أولاً باستخدام `!set_timeframe`.")
         return
-    user_state[ctx.author.id]["duration"] = duration
+    if duration not in DURATIONS:
+        await ctx.send("❌ المدة غير متاحة.")
+        return
+    user_state[ctx.author.id]['duration'] = duration
+    user = user_state[ctx.author.id]
+    await ctx.send(f"✅ تم إعداد البوت بنجاح:\n- العملة: `{user['symbol']}`\n- الفريم: `{user['timeframe']}`\n- المدة: `{user['duration']}`")
 
-    await ctx.send("✅ تم اختيار كل الإعدادات، جاري تحليل السوق...")
-
-    import random
-    result = random.choice(["⬆️ صعود", "⬇️ هبوط", "⏳ انتظار"])
-    await ctx.send(f"📊 نتيجة التحليل: **{result}**")
-
-# تشغيل البوت باستخدام التوكن من متغير بيئي
+# بدء تشغيل البوت باستخدام التوكن من المتغير البيئي
 bot.run(os.getenv("TOKEN"))
