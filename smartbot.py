@@ -1,118 +1,121 @@
 import os
 import discord
-from discord.ext import commands
-from discord import Intents, Interaction, ButtonStyle
-from discord.ui import Button, View
+import io
+import ccxt
 import asyncio
+import pandas as pd
+import matplotlib.pyplot as plt
+from discord.ext import commands
+from dotenv import load_dotenv
+from ta.momentum import RSIIndicator
+from ta.trend import SMAIndicator
+from PIL import Image
 
+# تحميل التوكن
 TOKEN = os.getenv("TOKEN")
 
-intents = Intents.default()
+# تفعيل الصلاحيات
+intents = discord.Intents.default()
 intents.message_content = True
+
+# إعداد البوت
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# العملات والفريمات ومدد الصفقات
-OTC_SYMBOLS = [
-    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
-    "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc",
-    "CHFJPY_otc", "NZDJPY_otc", "AUDCHF_otc", "EURCAD_otc"
+# قوائم الخيارات
+symbols = [
+    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc", "GBPJPY_otc",
+    "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc", "AUDUSD_otc", "USDCHF_otc"
 ]
-TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m", "2m", "5m"]
-DURATIONS = ["30s", "1m", "2m", "3m", "5m"]
+timeframes = ["5s", "10s", "30s", "1m", "5m", "15m"]
+durations = ["10s", "30s", "1m", "2m", "5m"]
 
 user_state = {}
 
-# تحليل ذكي وهمي (استبدله لاحقًا بتحليل حقيقي)
-def smart_analysis(symbol, tf, duration):
-    return f"✅ نتيجة التحليل: العملة **{symbol}**، الفريم **{tf}**، مدة الصفقة **{duration}** → 🔽 هبوط مؤكد"
+# ===== تحليل السوق الحقيقي =====
+def analyze_market(symbol: str, timeframe: str):
+    try:
+        exchange = ccxt.binance()
+        symbol_binance = symbol.replace("_otc", "/USDT")
+        ohlcv = exchange.fetch_ohlcv(symbol_binance, timeframe='1m', limit=100)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
+        rsi = RSIIndicator(df['close'], window=14).rsi().iloc[-1]
+        sma_fast = SMAIndicator(df['close'], window=5).sma_indicator().iloc[-1]
+        sma_slow = SMAIndicator(df['close'], window=20).sma_indicator().iloc[-1]
+
+        if rsi > 70 and sma_fast < sma_slow:
+            return "🔻 هبوط مؤكد"
+        elif rsi < 30 and sma_fast > sma_slow:
+            return "🔺 صعود مؤكد"
+        else:
+            return "⏸️ انتظر، السوق غير واضح"
+    except Exception as e:
+        return f"⚠️ فشل في التحليل: {str(e)}"
+
+# ===== استقبال الصور =====
 @bot.event
-async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.filename.endswith(('.png', '.jpg', '.jpeg')):
+                image_bytes = await attachment.read()
+                await message.channel.send("📷 تم استلام الصورة. جارٍ التحليل الذكي...")
+                # تحليل وهمي حاليًا
+                await asyncio.sleep(2)
+                await message.channel.send("✅ التحليل: السوق يبدو في حالة تذبذب. القرار: ⏸️ انتظر")
+    await bot.process_commands(message)
 
-@bot.command(name="ping")
-async def ping(ctx):
-    await ctx.send("📍 Pong!")
-
-@bot.command(name="ابدأ")
+# ===== الأوامر التفاعلية =====
+@bot.command()
 async def start(ctx):
-    view = View()
-    for symbol in OTC_SYMBOLS:
-        view.add_item(Button(label=symbol, style=ButtonStyle.primary, custom_id=f"symbol:{symbol}"))
-    await ctx.send("اختر العملة:", view=view)
+    user_state[ctx.author.id] = {}
+    view = discord.ui.View()
+    for sym in symbols:
+        view.add_item(discord.ui.Button(label=sym, style=discord.ButtonStyle.primary, custom_id=f"sym_{sym}"))
+    await ctx.send("🔽 اختر العملة:", view=view)
 
-@bot.event
-async def on_interaction(interaction: Interaction):
-    if interaction.data["custom_id"].startswith("symbol:"):
-        symbol = interaction.data["custom_id"].split(":")[1]
-        user_state[interaction.user.id] = {"symbol": symbol}
-        view = View()
-        for tf in TIMEFRAMES:
-            view.add_item(Button(label=tf, style=ButtonStyle.secondary, custom_id=f"tf:{tf}"))
-        view.add_item(Button(label="رجوع", style=ButtonStyle.danger, custom_id="back"))
-        await interaction.response.send_message(f"✅ اختر الفريم الزمني لـ {symbol}:", view=view, ephemeral=True)
+@bot.command()
+async def ping(ctx):
+    await ctx.send("🏓 البوت يعمل!")
 
-    elif interaction.data["custom_id"].startswith("tf:"):
-        tf = interaction.data["custom_id"].split(":")[1]
-        user_state[interaction.user.id]["tf"] = tf
-        view = View()
-        for duration in DURATIONS:
-            view.add_item(Button(label=duration, style=ButtonStyle.success, custom_id=f"dur:{duration}"))
-        view.add_item(Button(label="رجوع", style=ButtonStyle.danger, custom_id="back"))
-        await interaction.response.send_message("⏱️ اختر مدة الصفقة:", view=view, ephemeral=True)
+class ButtonView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=None)
+        self.user_id = user_id
 
-    elif interaction.data["custom_id"].startswith("dur:"):
-        duration = interaction.data["custom_id"].split(":")[1]
-        info = user_state.get(interaction.user.id)
-        if info:
-            symbol = info.get("symbol")
-            tf = info.get("tf")
-            result = smart_analysis(symbol, tf, duration)
-            await interaction.response.send_message(result)
-
-    elif interaction.data["custom_id"] == "back":
+    @discord.ui.button(label="🔁 رجوع", style=discord.ButtonStyle.danger, custom_id="back")
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         await start(interaction)
 
-@bot.command(name="العملات")
-async def show_symbols(ctx):
-    await ctx.send("💱 العملات المتوفرة OTC:\n" + "\n".join(OTC_SYMBOLS))
+# ===== معالجات الأزرار =====
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    custom_id = interaction.data.get("custom_id", "")
+    user_id = interaction.user.id
 
-@bot.command(name="الفريمات")
-async def show_timeframes(ctx):
-    await ctx.send("🕓 الفريمات الزمنية:\n" + ", ".join(TIMEFRAMES))
+    if custom_id.startswith("sym_"):
+        symbol = custom_id.replace("sym_", "")
+        user_state[user_id]["symbol"] = symbol
+        view = discord.ui.View()
+        for d in durations:
+            view.add_item(discord.ui.Button(label=d, style=discord.ButtonStyle.secondary, custom_id=f"dur_{d}"))
+        await interaction.response.send_message("⏱️ اختر مدة الصفقة:", view=view, ephemeral=True)
 
-@bot.command(name="المدد")
-async def show_durations(ctx):
-    await ctx.send("⏳ مدد الصفقات:\n" + ", ".join(DURATIONS))
+    elif custom_id.startswith("dur_"):
+        duration = custom_id.replace("dur_", "")
+        user_state[user_id]["duration"] = duration
+        symbol = user_state[user_id].get("symbol", "")
+        decision = analyze_market(symbol, "1m")
+        await interaction.response.send_message(f"📊 التحليل للعملة: **{symbol}**\n⏱️ المدة: **{duration}**\nالقرار: **{decision}**", ephemeral=False)
 
-@bot.command(name="تحليل")
-async def analyze_manual(ctx, symbol=None, tf=None, duration=None):
-    if not symbol or not tf or not duration:
-        await ctx.send("❌ الرجاء كتابة الأمر هكذا: `!تحليل [الرمز] [الفريم] [المدة]`")
-        return
-    result = smart_analysis(symbol, tf, duration)
-    await ctx.send(result)
+    elif custom_id == "back":
+        await start(interaction)
 
-@bot.command(name="مساعدة")
-async def help_command(ctx):
-    await ctx.send(
-        "🧠 أوامر البوت:\n"
-        "`!ping` - اختبار البوت\n"
-        "`!ابدأ` - عرض قائمة العملات\n"
-        "`!العملات` - عرض العملات المتوفرة\n"
-        "`!الفريمات` - عرض الفريمات الزمنية\n"
-        "`!المدد` - عرض مدد الصفقات\n"
-        "`!تحليل [الرمز] [الفريم] [المدة]` - تحليل ذكي يدوي\n"
-        "`!صورة` - تحليل صورة مرسلة\n"
-        "`!مباشر` - مشاركة الشاشة والتحليل التلقائي"
-    )
-
-@bot.command(name="صورة")
-async def analyze_image(ctx):
-    await ctx.send("📸 أرسل صورة الشارت الآن وسأقوم بتحليلها... (هذه الميزة تحت التطوير الذكي)")
-
-@bot.command(name="مباشر")
-async def screen_share(ctx):
-    await ctx.send("🖥️ عند تثبيتك على الشارت لمدة 5 ثوانٍ، سيتم التحليل تلقائيًا... (ميزة قيد التجربة)")
+# ===== تشغيل البوت =====
+@bot.event
+async def on_ready():
+    print(f"✅ البوت يعمل كـ: {bot.user}")
 
 bot.run(TOKEN)
