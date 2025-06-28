@@ -87,3 +87,20 @@ async def مساعدة(ctx):
 """)
 
 bot.run(TOKEN)
+@bot.command(name="تحليل")
+async def analyze(ctx, pair: str = None, timeframe: str = None, duration: str = None):
+    if not pair or not timeframe or not duration:
+        await ctx.send("❗ يرجى كتابة الأمر بهذه الصيغة:\n`!تحليل EURUSD_otc 10s 1m`")
+        return
+
+    # محاكاة تحليل ذكي (هنا يمكنك إضافة منطق حقيقي لاحقًا)
+    import random
+    decision = random.choice(["📈 صعود", "📉 هبوط", "⏳ انتظار"])
+
+    await ctx.send(f"""
+🔍 تحليل ذكي للعملة: **{pair}**
+🕒 الفريم الزمني: `{timeframe}`
+⏱️ مدة الصفقة: `{duration}`
+📊 القرار: **{decision}**
+⏰ التوقيت: {datetime.datetime.now().strftime('%I:%M %p')}
+""")
