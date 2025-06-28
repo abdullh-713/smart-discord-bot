@@ -3,31 +3,25 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل المتغيرات من ملف .env أو بيئة Railway
-load_dotenv()
+# تحميل التوكن من البيئة (أو يمكنك وضع التوكن يدويًا إن لم تستخدم .env)
+TOKEN = "MTM0ODU3Mj...kAkk0"  # <-- ضع التوكن الجديد الكامل هنا
 
-# تعيين صلاحيات البوت
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
+intents.guilds = True
+intents.members = True
+intents.presences = True
 
-# إنشاء البوت
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# عند تشغيل البوت
 @bot.event
 async def on_ready():
-    print(f"✅ تم تسجيل الدخول كبوت: {bot.user}")
+    print(f"✅ Bot is ready and logged in as {bot.user}")
 
-# أمر بسيط لتجربة البوت
 @bot.command()
 async def ping(ctx):
-    await ctx.send("🔔 Pong!")
+    await ctx.send("🏓 Pong!")
 
-# تشغيل البوت باستخدام التوكن من متغير البيئة
-if __name__ == "__main__":
-    token = os.getenv("TOKEN")
-    if token:
-        bot.run(token)
-    else:
-        print("❌ لم يتم العثور على التوكن! تأكد من إضافة TOKEN في متغيرات Railway.")
+# يمكنك إضافة أوامر أخرى هنا
+
+bot.run(TOKEN)
