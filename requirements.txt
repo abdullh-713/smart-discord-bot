@@ -1,4 +1,9 @@
 discord.py==2.0.0
-Pillow
+python-dotenv
 ccxt
-ta
+matplotlib
+pillow
+opencv-python
+numpy
+aiohttp
+requests
