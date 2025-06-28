@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل المتغيرات من ملف .env إن وُجد (اختياري)
+# تحميل المتغيرات من ملف .env أو بيئة Railway
 load_dotenv()
 
 # تعيين صلاحيات البوت
@@ -17,12 +17,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # عند تشغيل البوت
 @bot.event
 async def on_ready():
-    print(f"✅ تم تسجيل الدخول كبوت: {bot.user.name}")
+    print(f"✅ تم تسجيل الدخول كبوت: {bot.user}")
 
 # أمر بسيط لتجربة البوت
 @bot.command()
 async def ping(ctx):
-    await ctx.send("🏓 Pong!")
+    await ctx.send("🔔 Pong!")
 
 # تشغيل البوت باستخدام التوكن من متغير البيئة
 if __name__ == "__main__":
@@ -30,4 +30,4 @@ if __name__ == "__main__":
     if token:
         bot.run(token)
     else:
-        print("❌ خطأ: لم يتم العثور على متغير TOKEN في البيئة.")
+        print("❌ لم يتم العثور على التوكن! تأكد من إضافة TOKEN في متغيرات Railway.")
