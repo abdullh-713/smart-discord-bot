@@ -119,3 +119,6 @@ async def on_ready():
     print(f"✅ البوت يعمل كـ: {bot.user}")
 
 bot.run(TOKEN)
+@bot.command()
+async def اختبار(ctx):
+    await ctx.send("✅ التحليل الذكي يعمل الآن. أرسل صورة شارت لتحليلها أو استخدم الأزرار.")
