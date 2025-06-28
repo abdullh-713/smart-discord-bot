@@ -2,7 +2,7 @@ discord.py==2.0.0
 python-dotenv
 ccxt
 matplotlib
-pillow
+Pillow
 opencv-python
 numpy
 aiohttp
