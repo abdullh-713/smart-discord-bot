@@ -8,3 +8,4 @@ numpy
 aiohttp
 requests
 pandas
+ta
