@@ -8,4 +8,4 @@ numpy
 aiohttp
 requests
 pandas
-ta
+ta==0.10.2
