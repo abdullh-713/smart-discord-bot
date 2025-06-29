@@ -1,6 +1,13 @@
-from discord.ext import tasks
+import discord
+from discord.ext import commands, tasks
 import datetime
 import random
+import os
+
+# تعريف البوت
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 # قائمة عملات OTC
 OTC_SYMBOLS = [
@@ -8,6 +15,7 @@ OTC_SYMBOLS = [
     "EURJPY_otc", "GBPJPY_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
 ]
 
+# أوقات الدخول
 ENTRY_TIMES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]
 last_signal_time = None
 
@@ -30,12 +38,11 @@ async def aurix_loop():
 
         last_signal_time = now.strftime("%H:%M")
 
-        # قناة Discord (نفس القناة التي يعمل فيها البوت الحالي)
         for guild in bot.guilds:
             for channel in guild.text_channels:
                 if channel.permissions_for(guild.me).send_messages:
                     await send_aurix_signal(channel)
-                    return  # نرسل لإحدى القنوات فقط
+                    return
 
 async def send_aurix_signal(channel):
     symbol = random.choice(OTC_SYMBOLS)
@@ -49,3 +56,7 @@ async def send_aurix_signal(channel):
         f"📊 القرار: **{decision}**\n"
         f"📂 [نظام التكرار الزمني مفعل]"
     )
+
+# تشغيل البوت من التوكن البيئي
+TOKEN = os.getenv("TOKEN")
+bot.run(TOKEN)
