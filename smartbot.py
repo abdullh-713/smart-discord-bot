@@ -1,25 +1,53 @@
-import os
 import discord
-from discord.ext import commands
+import os
 import requests
+import numpy as np
+import pandas as pd
+import cv2
 from io import BytesIO
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForImageClassification
-import torch
+from discord.ext import commands
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volatility import BollingerBands
 from dotenv import load_dotenv
+import torch
+from transformers import AutoProcessor, AutoModel
 
-# تحميل متغيرات البيئة
 load_dotenv()
-TOKEN = os.getenv("TOKEN")  # تأكد أن متغير البيئة TOKEN موجود في Railway
+TOKEN = os.getenv("TOKEN")
 
-# إعداد البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحميل النموذج والمعالج
-processor = AutoProcessor.from_pretrained("microsoft/dit-base-finetuned-rvlcdip")
-model = AutoModelForImageClassification.from_pretrained("microsoft/dit-base-finetuned-rvlcdip")
+# تحميل نموذج ذكاء صناعي مخصص (محليًا أو من huggingface)
+processor = AutoProcessor.from_pretrained("nateraw/bert-base-uncased-emotion")
+model = AutoModel.from_pretrained("nateraw/bert-base-uncased-emotion")
+
+def analyze_image(img: Image.Image):
+    # تحويل الصورة إلى numpy
+    img_np = np.array(img.convert("RGB"))
+
+    # استخراج بعض البيانات الأساسية من الصورة
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # افتراض مؤشرات مرئية:
+    avg_brightness = np.mean(blur)
+
+    # تحليل بدائي لمحاكاة RSI و Bollinger و MACD (استبداله لاحقاً بالتحليل الذكي من الصورة مباشرة)
+    rsi_val = 70 if avg_brightness > 140 else 30
+    macd_val = 1 if avg_brightness > 130 else -1
+    boll_val = "tight" if np.std(blur) < 10 else "wide"
+
+    # القرار النهائي:
+    if rsi_val > 65 and macd_val > 0 and boll_val == "wide":
+        return "⬇️ هبوط"
+    elif rsi_val < 35 and macd_val < 0 and boll_val == "wide":
+        return "⬆️ صعود"
+    else:
+        return "⏸️ انتظار"
 
 @bot.event
 async def on_ready():
@@ -27,35 +55,20 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # تجاهل رسائل البوت نفسه
     if message.author == bot.user:
         return
 
-    # إذا احتوت الرسالة على صورة
+    # إذا كانت الرسالة تحتوي على صورة
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
+            if any(attachment.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg"]):
                 try:
-                    image_url = attachment.url
-                    image_data = requests.get(image_url).content
-                    image = Image.open(BytesIO(image_data)).convert("RGB")
+                    response = requests.get(attachment.url)
+                    image = Image.open(BytesIO(response.content))
+                    prediction = analyze_image(image)
 
-                    # تجهيز الصورة للنموذج
-                    inputs = processor(images=image, return_tensors="pt")
-                    with torch.no_grad():
-                        outputs = model(**inputs)
-
-                    logits = outputs.logits
-                    predicted_class_idx = logits.argmax(-1).item()
-                    predicted_label = model.config.id2label[predicted_class_idx]
-
-                    await message.channel.send(f"📊 Prediction: **{predicted_label}**")
-
+                    await message.channel.send(f"📉 Prediction: **{prediction}**")
                 except Exception as e:
-                    await message.channel.send("❌ حدث خطأ أثناء تحليل الصورة.")
-                    print(f"Error: {e}")
+                    await message.channel.send(f"❌ حدث خطأ أثناء التحليل: {e}")
 
     await bot.process_commands(message)
-
-# تشغيل البوت
-bot.run(TOKEN)
