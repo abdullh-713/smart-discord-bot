@@ -1,52 +1,86 @@
-import discord
-import pytesseract
-import io
-import cv2
-import numpy as np
-import logging
 import os
-from dotenv import load_dotenv
+import discord
+from discord.ext import commands
+from PIL import Image
+import io
+import logging
 
-# إعدادات
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
-
-# إعدادات التسجيل
+# إعدادات السجل
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-@client.event
+# جلب التوكن من المتغير البيئي
+TOKEN = os.getenv("TOKEN")
+
+# إعداد صلاحيات البوت
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+
+# تهيئة البوت
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
 async def on_ready():
-    logging.info(f"✅ تم تسجيل الدخول باسم: {client.user}")
+    logger.info(f"✅ تم تسجيل الدخول باسم: {bot.user}")
 
-@client.event
+def analyze_image_colors(image: Image.Image) -> str:
+    """
+    تحليل الصورة بناءً على الألوان (الأخضر > صعود، الأحمر > هبوط، مختلط > انتظار)
+    """
+    try:
+        image = image.convert("RGB").resize((300, 300))
+        pixels = list(image.getdata())
+
+        red_count = 0
+        green_count = 0
+
+        for r, g, b in pixels:
+            if r > 200 and g < 100:
+                red_count += 1
+            elif g > 200 and r < 100:
+                green_count += 1
+
+        total = red_count + green_count
+
+        if total == 0:
+            return "❌ لا يوجد بيانات كافية"
+
+        red_ratio = red_count / total
+        green_ratio = green_count / total
+
+        if red_ratio > 0.6:
+            return "📉 هبوط"
+        elif green_ratio > 0.6:
+            return "📈 صعود"
+        else:
+            return "⏳ انتظار"
+    except Exception as e:
+        logger.error(f"فشل تحليل الصورة: {e}")
+        return "❌ حدث خطأ أثناء تحليل الصورة."
+
+@bot.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == bot.user:
         return
 
-    # تحليل الصورة عند إرسال مرفق
+    # تحقق من وجود مرفقات صور
     if message.attachments:
         for attachment in message.attachments:
             if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 try:
                     image_bytes = await attachment.read()
-                    image_np = np.frombuffer(image_bytes, np.uint8)
-                    image = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
-
-                    # تحليل النص من الصورة
-                    text = pytesseract.image_to_string(image, lang="eng+ara")
-
-                    # استجابة حسب الكلمات المفتاحية
-                    if "صعود" in text or "up" in text:
-                        await message.channel.send("✅ القرار: صعود 📈")
-                    elif "هبوط" in text or "down" in text:
-                        await message.channel.send("🔻 القرار: هبوط 📉")
-                    else:
-                        await message.channel.send("⏳ لم يتم التعرف على الاتجاه بشكل واضح.")
+                    image = Image.open(io.BytesIO(image_bytes))
+                    result = analyze_image_colors(image)
+                    await message.channel.send(result)
                 except Exception as e:
+                    logger.error(f"تحليل مرفق فشل: {e}")
                     await message.channel.send("❌ حدث خطأ أثناء تحليل الصورة.")
-                    logging.error(f"تحليل الصورة فشل: {e}")
+    await bot.process_commands(message)
 
-client.run(TOKEN)
+# تشغيل البوت
+if __name__ == "__main__":
+    if not TOKEN:
+        logger.error("❌ لم يتم العثور على التوكن في المتغير البيئي TOKEN")
+    else:
+        bot.run(TOKEN)
