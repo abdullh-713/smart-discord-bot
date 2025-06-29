@@ -1,87 +1,90 @@
-import discord
 import os
-import cv2
+import io  # ✅ إصلاح الخطأ هنا
+import discord
 import numpy as np
 import torch
 import torchvision.transforms as transforms
-from torchvision import models
 from PIL import Image
-from dotenv import load_dotenv
-import hashlib
-from datetime import datetime
+from torchvision.models import resnet50, ResNet50_Weights
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volatility import BollingerBands
+import warnings
 
-# تحميل المتغيرات البيئية
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
+warnings.filterwarnings("ignore")
 
-# إعدادات Discord
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-# قاعدة بيانات بسيطة للصور المُعالجة
-processed_hashes = {}
-
-# تحميل نموذج ذكاء صناعي مُدرب مسبقًا
-model = models.resnet50(pretrained=True)
+# تحميل النموذج المدرب مسبقًا ResNet50
+model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
 model.eval()
 
-# تصنيفات وهمية: 0 = هبوط، 1 = صعود
-labels = ["هبوط", "صعود"]
-
-# تحويل الصور إلى شكل يمكن للنموذج قراءته
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
-    transforms.ToTensor()
+    transforms.ToTensor(),
 ])
 
-# دالة التحقق من تكرار الصورة
-def is_duplicate(image_bytes):
-    image_hash = hashlib.md5(image_bytes).hexdigest()
-    current_minute = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if processed_hashes.get(current_minute) == image_hash:
-        return True
-    processed_hashes[current_minute] = image_hash
-    return False
-
-# دالة تحليل الصورة وإعطاء القرار
-def predict_image(image_bytes):
-    image = Image.open(image_bytes).convert("RGB")
-    input_tensor = transform(image).unsqueeze(0)
-
+def extract_features(image):
+    img_tensor = transform(image).unsqueeze(0)
     with torch.no_grad():
-        outputs = model(input_tensor)
-        _, predicted = torch.max(outputs, 1)
+        features = model(img_tensor)
+    return features.numpy().flatten()
 
-    return labels[predicted.item()]
+def analyze_with_indicators(img_array):
+    try:
+        prices = np.mean(img_array, axis=2).mean(axis=1)  # تحويل الصورة إلى بيانات سعرية تقريبية
 
-# عند تشغيل البوت
+        rsi = RSIIndicator(pd.Series(prices)).rsi().fillna(0)
+        macd = MACD(pd.Series(prices)).macd_diff().fillna(0)
+        bb = BollingerBands(pd.Series(prices)).bollinger_mavg().fillna(0)
+
+        signals = []
+
+        if rsi.iloc[-1] < 30 and macd.iloc[-1] > 0 and prices[-1] < bb.iloc[-1]:
+            signals.append("صعود")
+        elif rsi.iloc[-1] > 70 and macd.iloc[-1] < 0 and prices[-1] > bb.iloc[-1]:
+            signals.append("هبوط")
+
+        if not signals:
+            signals.append("صعود" if macd.iloc[-1] > 0 else "هبوط")
+
+        return signals[-1]
+
+    except Exception as e:
+        print(f"Error in analyze_with_indicators: {e}")
+        return None
+
 @client.event
 async def on_ready():
-    print(f"✅ تم تسجيل الدخول كبوت: {client.user}")
+    print(f'✅ تسجيل الدخول كمستخدم: {client.user}')
 
-# عند استقبال رسالة
 @client.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == client.user or not message.attachments:
         return
 
-    if message.attachments:
-        for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-                try:
-                    image_bytes = await attachment.read()
+    for attachment in message.attachments:
+        if any(attachment.filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
+            try:
+                image_bytes = await attachment.read()
+                image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-                    if is_duplicate(image_bytes):
-                        await message.channel.send("⚠️ تم تجاهل صورة مكررة أو تم إرسالها قبل انتهاء الوقت.")
-                        return
+                img_array = np.array(image)
+                decision = analyze_with_indicators(img_array)
 
-                    decision = predict_image(image_bytes=Image.open(io.BytesIO(image_bytes)))
-                    await message.channel.send(f"📈 القرار: **{decision}**")
+                if decision:
+                    await message.channel.send(f"✅ التحليل: {decision}")
+                else:
+                    await message.channel.send("❌ لم يتمكن البوت من اتخاذ قرار واضح")
 
-                except Exception as e:
-                    await message.channel.send(f"حدث خطأ أثناء تحليل الصورة ❌: {str(e)}")
+            except Exception as e:
+                await message.channel.send(f"❌ حدث خطأ أثناء تحليل الصورة: {e}")
 
-# تشغيل البوت
-client.run(TOKEN)
+# قراءة التوكن من متغير بيئي
+TOKEN = os.getenv("TOKEN")
+if TOKEN:
+    client.run(TOKEN)
+else:
+    print("❌ لم يتم العثور على التوكن. تأكد من تعيين متغير البيئة TOKEN.")
