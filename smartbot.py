@@ -1,15 +1,12 @@
 import os
-import discord
-import datetime
 import random
+import datetime
+import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 
-# توكن البوت من متغير البيئة
-TOKEN = os.getenv("TOKEN")
-
+# إعداد البوت
 intents = discord.Intents.default()
-intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # قائمة عملات OTC
@@ -18,25 +15,37 @@ OTC_SYMBOLS = [
     "EURJPY_otc", "GBPJPY_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
 ]
 
-# الفريمات والصفقات (لتنظيم الرسالة فقط)
-TIMEFRAMES = ["5s", "10s", "15s", "30s", "1m"]
-DURATIONS = ["30s", "1m", "2m", "3m", "5m"]
-
-# قائمة أوقات الدخول الثابتة
+# قائمة توقيتات الدخول
 ENTRY_TIMES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]
 last_signal_time = None
 
-# بدء البوت
+# ✅ عند التشغيل
 @bot.event
 async def on_ready():
     print(f"✅ Aurix-style bot active as: {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"🟢 Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"❌ Sync failed: {e}")
     aurix_loop.start()
 
-# نظام التكرار الزمني
+# ✅ أمر /start من نوع سلاش
+@bot.tree.command(name="start", description="ابدأ تحليل Aurix")
+async def start(interaction: discord.Interaction):
+    view = AurixButton()
+    await interaction.response.send_message("👋 مرحبًا بك في نظام إشارات Aurix\nاضغط على الزر أدناه لبدء التحليل ⬇️", view=view)
+
+# ✅ الزر التفاعلي
+class AurixButton(discord.ui.View):
+    @discord.ui.button(label="ابدأ التحليل", style=discord.ButtonStyle.success)
+    async def start_analysis(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await send_aurix_signal(interaction.channel)
+
+# ✅ إشارات تلقائية كل 5 دقائق
 @tasks.loop(seconds=1.0)
 async def aurix_loop():
     global last_signal_time
-
     now = datetime.datetime.utcnow()
     minute = now.strftime("%M")
     second = now.strftime("%S")
@@ -50,23 +59,21 @@ async def aurix_loop():
             for channel in guild.text_channels:
                 if channel.permissions_for(guild.me).send_messages:
                     await send_aurix_signal(channel)
-                    return  # إرسال إشارة واحدة فقط
+                    return
 
-# إرسال الإشارة
+# ✅ إرسال إشارة
 async def send_aurix_signal(channel):
     symbol = random.choice(OTC_SYMBOLS)
     decision = random.choice(["📈 صعود", "📉 هبوط"])
-    timeframe = random.choice(TIMEFRAMES)
-    duration = random.choice(DURATIONS)
     now = datetime.datetime.utcnow().strftime('%H:%M:%S')
 
     await channel.send(
         f"🧠 **إشارة Aurix**\n"
         f"💱 العملة: `{symbol}`\n"
         f"🕒 الوقت: `{now}`\n"
-        f"⏱️ الفريم: `{timeframe}` | الصفقة: `{duration}`\n"
         f"📊 القرار: **{decision}**\n"
-        f"📂 [نظام التكرار الزمني مفعل]"
+        f"📂 [نظام التكرار الزمني مفعل ✅]"
     )
 
-bot.run(TOKEN)
+# ✅ تشغيل البوت باستخدام التوكن من المتغير البيئي
+bot.run(os.getenv("TOKEN"))
