@@ -1,26 +1,25 @@
-# Discord bot
 discord.py==2.0.0
 python-dotenv
-aiohttp
-requests
 
-# الرؤية الحاسوبية وتحليل الصور
+# رؤية حاسوبية وتحليل صور
 opencv-python-headless
 numpy
 pillow
+requests
+aiohttp
 
-# قراءة النصوص من الصور
-pytesseract
-
-# مؤشرات فنية وتحليل تقني
+# مؤشرات فنية
 ta==0.10.2
 pandas
 matplotlib
 
-# الذكاء الاصطناعي والتعلم العميق
+# قراءة الصور وتحليلها
+pytesseract
+
+# ذكاء اصطناعي وتحليل عميق
+transformers
 torch
 torchvision
-transformers
 scikit-learn
 scipy
 
