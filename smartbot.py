@@ -1,90 +1,93 @@
-import os
-import io  # ✅ إصلاح الخطأ هنا
 import discord
-import numpy as np
-import torch
-import torchvision.transforms as transforms
+from discord.ext import commands
 from PIL import Image
-from torchvision.models import resnet50, ResNet50_Weights
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-from ta.volatility import BollingerBands
-import warnings
+import torchvision.transforms as transforms
+import torch
+import torch.nn as nn
+from torchvision.models import resnet50
+import io
+import cv2
+import numpy as np
+import os
 
-warnings.filterwarnings("ignore")
-
+# إعداد صلاحيات البوت
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحميل النموذج المدرب مسبقًا ResNet50
-model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+# تحميل نموذج ResNet50 وتعديله لتصنيف (صعود / هبوط فقط)
+model = resnet50(pretrained=True)
+model.fc = nn.Linear(model.fc.in_features, 2)  # فئتان فقط: صعود / هبوط
 model.eval()
 
+# تحويل الصور إلى تنسيق مناسب للنموذج
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
 
-def extract_features(image):
-    img_tensor = transform(image).unsqueeze(0)
-    with torch.no_grad():
-        features = model(img_tensor)
-    return features.numpy().flatten()
+# خريطة النتائج إلى قرارات
+labels_map = {
+    0: "📈 صعود",
+    1: "📉 هبوط"
+}
 
-def analyze_with_indicators(img_array):
-    try:
-        prices = np.mean(img_array, axis=2).mean(axis=1)  # تحويل الصورة إلى بيانات سعرية تقريبية
+# تقسيم الصورة إلى مناطق الشموع + المؤشرات
+def extract_indicator_regions(img_pil):
+    img_cv = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+    h, w, _ = img_cv.shape
 
-        rsi = RSIIndicator(pd.Series(prices)).rsi().fillna(0)
-        macd = MACD(pd.Series(prices)).macd_diff().fillna(0)
-        bb = BollingerBands(pd.Series(prices)).bollinger_mavg().fillna(0)
+    # مناطق القص: حسب النسبة المئوية للمؤشرات داخل الصورة
+    candles = img_cv[int(0.05*h):int(0.55*h), int(0.1*w):int(0.9*w)]
+    rsi     = img_cv[int(0.85*h):int(0.95*h), int(0.1*w):int(0.9*w)]
+    macd    = img_cv[int(0.75*h):int(0.85*h), int(0.1*w):int(0.9*w)]
+    boll    = img_cv[int(0.05*h):int(0.55*h), int(0.1*w):int(0.9*w)]
 
-        signals = []
+    return [candles, rsi, macd, boll]
 
-        if rsi.iloc[-1] < 30 and macd.iloc[-1] > 0 and prices[-1] < bb.iloc[-1]:
-            signals.append("صعود")
-        elif rsi.iloc[-1] > 70 and macd.iloc[-1] < 0 and prices[-1] > bb.iloc[-1]:
-            signals.append("هبوط")
+# تحويل كل جزء إلى تنسيق ResNet وتحليله
+def preprocess_region(region):
+    image = Image.fromarray(cv2.cvtColor(region, cv2.COLOR_BGR2RGB))
+    return transform(image).unsqueeze(0)
 
-        if not signals:
-            signals.append("صعود" if macd.iloc[-1] > 0 else "هبوط")
+# تحليل كل منطقة وإعطاء القرار النهائي
+def predict_signal(regions):
+    signals = []
+    for region in regions:
+        tensor = preprocess_region(region)
+        with torch.no_grad():
+            output = model(tensor)
+            _, pred = torch.max(output, 1)
+            signals.append(pred.item())
 
-        return signals[-1]
+    # خوارزمية التصويت: إذا الأغلبية صعود => صعود
+    final = 0 if signals.count(0) > signals.count(1) else 1
+    return labels_map[final]
 
-    except Exception as e:
-        print(f"Error in analyze_with_indicators: {e}")
-        return None
-
-@client.event
+# عند تشغيل البوت
+@bot.event
 async def on_ready():
-    print(f'✅ تسجيل الدخول كمستخدم: {client.user}')
+    print(f"✅ Logged in as {bot.user}")
 
-@client.event
+# عند استقبال رسالة تحتوي على صورة
+@bot.event
 async def on_message(message):
-    if message.author == client.user or not message.attachments:
+    if message.author == bot.user:
         return
 
-    for attachment in message.attachments:
-        if any(attachment.filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-            try:
-                image_bytes = await attachment.read()
-                image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if message.attachments:
+        for attachment in message.attachments:
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                try:
+                    image_bytes = await attachment.read()
+                    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                    regions = extract_indicator_regions(image)
+                    signal = predict_signal(regions)
+                    await message.channel.send(f"🤖 قرار البوت: **{signal}**")
+                except Exception as e:
+                    await message.channel.send(f"❌ خطأ أثناء التحليل: {str(e)}")
 
-                img_array = np.array(image)
-                decision = analyze_with_indicators(img_array)
+    await bot.process_commands(message)
 
-                if decision:
-                    await message.channel.send(f"✅ التحليل: {decision}")
-                else:
-                    await message.channel.send("❌ لم يتمكن البوت من اتخاذ قرار واضح")
-
-            except Exception as e:
-                await message.channel.send(f"❌ حدث خطأ أثناء تحليل الصورة: {e}")
-
-# قراءة التوكن من متغير بيئي
-TOKEN = os.getenv("TOKEN")
-if TOKEN:
-    client.run(TOKEN)
-else:
-    print("❌ لم يتم العثور على التوكن. تأكد من تعيين متغير البيئة TOKEN.")
+# تشغيل البوت باستخدام التوكن من متغير البيئة
+bot.run(os.getenv("TOKEN"))
