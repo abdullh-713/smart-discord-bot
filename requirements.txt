@@ -1,6 +1,27 @@
+# Discord bot
 discord.py==2.0.0
 python-dotenv
-numpy
+
+# رؤية حاسوبية وتحليل صور
 opencv-python-headless
-requests
+numpy
 pillow
+requests
+aiohttp
+
+# مؤشرات فنية
+ta==0.10.2
+pandas
+matplotlib
+
+# قراءة الصور وتحليلها
+pytesseract
+
+# ذكاء اصطناعي وتحليل عميق
+transformers
+torch
+scikit-learn
+scipy
+
+# نماذج HuggingFace
+sentencepiece
