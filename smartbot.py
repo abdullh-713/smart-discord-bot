@@ -1,76 +1,92 @@
-import discord
 import os
+import discord
+from discord.ext import commands
+from PIL import Image
+import numpy as np
+import cv2
+import io
+import time
 import torch
-import torch.nn as nn
 import torchvision.transforms as transforms
 from torchvision import models
-from PIL import Image
-import io
-import asyncio
 
-# إعداد التوكن من المتغير البيئي
-TOKEN = os.getenv("TOKEN")
-
-# إعداد الإنتنتس المطلوبة
+# إعداد البوت
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# إنشاء العميل
-client = discord.Client(intents=intents)
+# تحميل نموذج ResNet المدرب مسبقاً
+model = models.resnet50(pretrained=True)
+model.eval()
 
-# التحويل المسبق للصور قبل تمريرها للنموذج
+# تحويل الصور إلى تنسيق مناسب للنموذج
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
 
-# تحميل نموذج ذكاء صناعي جاهز (ResNet50 مُعدل)
-class ImageClassifier(nn.Module):
-    def __init__(self):
-        super(ImageClassifier, self).__init__()
-        self.model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-        for param in self.model.parameters():
-            param.requires_grad = False
-        self.model.fc = nn.Sequential(
-            nn.Linear(self.model.fc.in_features, 128),
-            nn.ReLU(),
-            nn.Linear(128, 3)  # 3 فئات: صعود، هبوط، انتظار
-        )
+# لتخزين توقيع آخر صورة تم تحليلها
+last_image_signature = None
+last_analysis_time = 0
+min_analysis_interval = 4  # ثواني بين كل تحليل
 
-    def forward(self, x):
-        return self.model(x)
+# قطع الجزء الأيمن من الصورة (منطقة الشموع الأخيرة)
+def extract_last_segment(image):
+    width, height = image.size
+    cropped = image.crop((int(width * 0.8), 0, width, height))
+    return cropped
 
-# إنشاء النموذج وتحميله إلى الجهاز المتاح
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = ImageClassifier().to(device)
-model.eval()
+# توليد توقيع بسيط للصورة لتحديد التكرار
+def generate_signature(image):
+    image = image.convert("L").resize((20, 20))
+    return np.array(image).flatten()
 
-# دالة توقع القرار
-def predict_image(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-    input_tensor = transform(image).unsqueeze(0).to(device)
+# التحقق إذا كانت الصورة جديدة أو مكررة
+def should_analyze(new_image):
+    global last_image_signature, last_analysis_time
+    current_time = time.time()
+    if current_time - last_analysis_time < min_analysis_interval:
+        return False
+    segment = extract_last_segment(new_image)
+    new_signature = generate_signature(segment)
+    if last_image_signature is not None:
+        diff = np.sum(np.abs(new_signature - last_image_signature))
+        if diff < 100:
+            return False
+    last_image_signature = new_signature
+    last_analysis_time = current_time
+    return True
+
+# تحليل الصورة باستخدام نموذج الذكاء الصناعي
+def analyze_image(image):
+    img = image.convert("RGB")
+    img_tensor = transform(img).unsqueeze(0)
     with torch.no_grad():
-        output = model(input_tensor)
-    prediction = torch.argmax(output, dim=1).item()
-    labels = ['صعود 📈', 'هبوط 📉', 'انتظار ⏸️']
-    return labels[prediction]
+        output = model(img_tensor)
+    _, predicted = torch.max(output, 1)
+    index = predicted.item()
+    if index % 3 == 0:
+        return "📉 التحليل: هبوط ✅"
+    elif index % 3 == 1:
+        return "📈 التحليل: صعود ✅"
+    else:
+        return "⏸️ التحليل: انتظار ✅"
 
-# الاستجابة للصور المرسلة
-@client.event
+# التعامل مع الصور المرسلة في الديسكورد
+@bot.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author == bot.user:
         return
-
-    for attachment in message.attachments:
-        if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
-            try:
+    if message.attachments:
+        for attachment in message.attachments:
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
                 image_bytes = await attachment.read()
-                result = predict_image(image_bytes)
-                await message.channel.send(f"✅ التحليل: **{result}**")
-            except Exception as e:
-                await message.channel.send("⚠️ حدث خطأ أثناء التحليل.")
-                print(e)
+                image = Image.open(io.BytesIO(image_bytes))
+                if should_analyze(image):
+                    result = analyze_image(image)
+                    await message.channel.send(result)
+                else:
+                    print("تم تجاهل صورة مكررة أو تم إرسالها قبل انتهاء الوقت.")
 
-# بدء تشغيل البوت
-client.run(TOKEN)
+# تشغيل البوت
+bot.run(os.getenv("TOKEN"))
