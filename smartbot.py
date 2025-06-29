@@ -1,48 +1,46 @@
+import os
 import discord
 from discord.ext import commands
-from PIL import Image
 import pytesseract
-import io
-import re
-import os
+from PIL import Image
+import cv2
+import numpy as np
+import requests
+from io import BytesIO
 
-TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+TOKEN = os.getenv("TOKEN")  # استخدام المتغير البيئي
+
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is ready. Logged in as {bot.user.name}")
-
-def analyze_chart(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes))
-    text = pytesseract.image_to_string(image)
-    decision = "🕐 القرار: انتظار"
-
-    if "rsi" in text.lower() or "stoch" in text.lower():
-        if re.search(r"(70|80)[\s%]*", text.lower()):
-            decision = "❌ القرار: هبوط"
-        elif re.search(r"(20|30)[\s%]*", text.lower()):
-            decision = "✅ القرار: صعود"
-
-    if text.lower().count("green") >= 3:
-        decision = "✅ القرار: صعود"
-    elif text.lower().count("red") >= 3:
-        decision = "❌ القرار: هبوط"
-
-    return decision
+    print(f"✅ تم تسجيل الدخول باسم {bot.user}")
 
 @bot.event
 async def on_message(message):
-    if message.author.bot or not message.attachments:
+    if message.author == bot.user:
         return
 
-    for attachment in message.attachments:
-        if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            image_bytes = await attachment.read()
-            decision = analyze_chart(image_bytes)
-            await message.channel.send(decision)
+    if message.attachments:
+        for attachment in message.attachments:
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                img_bytes = await attachment.read()
+                img_array = np.asarray(bytearray(img_bytes), dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                text = pytesseract.image_to_string(gray)
+
+                # تحليل بسيط — عدل هنا لاحقاً لتفعيل الاستراتيجيات الذكية
+                if "green" in text.lower():
+                    decision = "✅ القرار: صعود 📈"
+                elif "red" in text.lower():
+                    decision = "✅ القرار: هبوط 📉"
+                else:
+                    decision = "✅ القرار: انتظار 📊"
+
+                await message.channel.send(decision)
 
 bot.run(TOKEN)
