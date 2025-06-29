@@ -9,3 +9,4 @@ aiohttp
 requests
 pandas
 ta==0.10.2
+pytesseract
