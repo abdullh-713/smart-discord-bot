@@ -1,83 +1,68 @@
-import os
 import discord
-import requests
-import numpy as np
-import pandas as pd
 import cv2
-from io import BytesIO
+import numpy as np
 from PIL import Image
-from discord.ext import commands
-from dotenv import load_dotenv
-import pytesseract
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-from ta.volatility import BollingerBands
+import io
+import os
+import torchvision.transforms as transforms
 import torch
-from transformers import AutoImageProcessor, AutoModelForImageClassification
+import torchvision.models as models
 
-# تحميل المتغيرات البيئية
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-
-# إعداد البوت
 intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.messages = True
+intents.message_content = True  # مهم جدًا
 
-# تحميل النموذج الذكاء الصناعي
-processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
-model = AutoModelForImageClassification.from_pretrained("microsoft/resnet-50")
+client = discord.Client(intents=intents)
 
-# تحليل الصورة واستخراج المؤشرات
-def extract_market_features(img: Image.Image):
-    img_np = np.array(img.convert("RGB"))
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+# نموذج ذكاء صناعي مدرب مسبقًا (ResNet50 كمثال)
+model = models.resnet50(pretrained=True)
+model.eval()
 
-    brightness = np.mean(blur)
-    volatility = np.std(blur)
+# التحويلات على الصورة
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor()
+])
 
-    text = pytesseract.image_to_string(img)
+def analyze_image(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    image_tensor = transform(image).unsqueeze(0)
 
-    # إعداد قيم وهمية للمؤشرات
-    rsi_value = 70 if brightness > 140 else 30
-    macd_value = 1 if brightness > 130 else -1
-    boll = "tight" if volatility < 10 else "wide"
+    with torch.no_grad():
+        outputs = model(image_tensor)
 
-    return rsi_value, macd_value, boll, text
+    # فقط كمثال — لا تعتمد على هذه القيم لتحليل السوق الحقيقي
+    prediction_score = torch.nn.functional.softmax(outputs[0], dim=0)
+    confidence, predicted_class = torch.max(prediction_score, dim=0)
 
-# اتخاذ القرار
-def make_final_decision(rsi, macd, boll):
-    if rsi > 65 and macd > 0 and boll == "wide":
-        return "⬇️ هبوط"
-    elif rsi < 35 and macd < 0 and boll == "wide":
-        return "⬆️ صعود"
+    # تحليل مبسط يعتمد على العشوائية — استبدله بتحليل حقيقي لاحقًا
+    if predicted_class.item() % 3 == 0:
+        return "📉 هبوط"
+    elif predicted_class.item() % 3 == 1:
+        return "📈 صعود"
     else:
-        return "⏸️ انتظار"
+        return "⏳ انتظار"
 
-@bot.event
+@client.event
 async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
+    print(f"✅ Bot is online as {client.user}")
 
-@bot.event
+@client.event
 async def on_message(message):
-    if message.author == bot.user:
+    if message.author == client.user:
         return
 
-    # استقبال الصور
+    # في حال وجود مرفقات (صور)
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
                 try:
-                    response = requests.get(attachment.url)
-                    img = Image.open(BytesIO(response.content))
-
-                    rsi, macd, boll, text = extract_market_features(img)
-                    decision = make_final_decision(rsi, macd, boll)
-
-                    await message.channel.send(f"📊 RSI: {rsi}, MACD: {macd}, Bollinger: {boll}")
-                    await message.channel.send(f"📈 القرار النهائي: **{decision}**")
+                    image_bytes = await attachment.read()
+                    result = analyze_image(image_bytes)
+                    await message.channel.send(f"📊 النتيجة: **{result}**")
                 except Exception as e:
-                    await message.channel.send(f"❌ خطأ أثناء التحليل: {e}")
+                    await message.channel.send("❌ حدث خطأ أثناء تحليل الصورة")
+                    print(e)
 
-    await bot.process_commands(message)
+# تشغيل البوت
+client.run(os.getenv("TOKEN"))
