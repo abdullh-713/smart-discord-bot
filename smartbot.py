@@ -1,46 +1,48 @@
 import discord
-import io
+from discord.ext import commands
 from PIL import Image
-import random
+import pytesseract
+import io
+import re
 import os
 
-# استخدم التوكن من المتغير البيئي
 TOKEN = os.getenv("TOKEN")
-
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-client = discord.Client(intents=intents)
+@bot.event
+async def on_ready():
+    print(f"✅ Bot is ready. Logged in as {bot.user.name}")
 
-# نموذج تحليل الصور (تجريبي)
-def analyze_image(image: Image.Image) -> str:
-    # هنا يمكنك استخدام نموذج حقيقي لتحليل المؤشرات والشموع والثغرات
-    # حالياً نستخدم اختيار عشوائي للمحاكاة
-    decision = random.choice(["صعود", "هبوط", "انتظار"])
+def analyze_chart(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes))
+    text = pytesseract.image_to_string(image)
+    decision = "🕐 القرار: انتظار"
+
+    if "rsi" in text.lower() or "stoch" in text.lower():
+        if re.search(r"(70|80)[\s%]*", text.lower()):
+            decision = "❌ القرار: هبوط"
+        elif re.search(r"(20|30)[\s%]*", text.lower()):
+            decision = "✅ القرار: صعود"
+
+    if text.lower().count("green") >= 3:
+        decision = "✅ القرار: صعود"
+    elif text.lower().count("red") >= 3:
+        decision = "❌ القرار: هبوط"
+
     return decision
 
-@client.event
-async def on_ready():
-    print(f"✅ البوت جاهز. اسم المستخدم: {client.user}")
-
-@client.event
+@bot.event
 async def on_message(message):
-    if message.author == client.user:
+    if message.author.bot or not message.attachments:
         return
 
-    if message.attachments:
-        for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg"]):
-                try:
-                    img_bytes = await attachment.read()
-                    img = Image.open(io.BytesIO(img_bytes))
+    for attachment in message.attachments:
+        if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            image_bytes = await attachment.read()
+            decision = analyze_chart(image_bytes)
+            await message.channel.send(decision)
 
-                    decision = analyze_image(img)
-
-                    await message.channel.send(f"📊 القرار: **{decision}** ✅")
-
-                except Exception as e:
-                    await message.channel.send(f"❌ حدث خطأ أثناء تحليل الصورة: {str(e)}")
-
-client.run(TOKEN)
+bot.run(TOKEN)
