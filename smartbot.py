@@ -1,75 +1,76 @@
 import discord
 import os
-import cv2
-import numpy as np
-import pytesseract
 import torch
+import torch.nn as nn
 import torchvision.transforms as transforms
+from torchvision import models
 from PIL import Image
-from dotenv import load_dotenv
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-from io import BytesIO
+import io
+import asyncio
 
-load_dotenv()
+# إعداد التوكن من المتغير البيئي
 TOKEN = os.getenv("TOKEN")
 
+# إعداد الإنتنتس المطلوبة
 intents = discord.Intents.default()
+intents.messages = True
 intents.message_content = True
+
+# إنشاء العميل
 client = discord.Client(intents=intents)
 
-def preprocess_image(image_bytes):
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    image_np = np.array(image)
-    gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    return gray
+# التحويل المسبق للصور قبل تمريرها للنموذج
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
 
-def extract_candles_and_indicators(gray_image):
-    # استخلاص بيانات تحليلية من الصورة (تجريبية - يمكن تحسينها لاحقًا)
-    text = pytesseract.image_to_string(gray_image)
-    rsi = 50
-    macd = 0
-    signal = 0
-    if "RSI" in text:
-        try:
-            rsi_val = int(text.split("RSI")[1].split()[0])
-            rsi = max(0, min(100, rsi_val))
-        except: pass
-    if "MACD" in text:
-        try:
-            macd_val = float(text.split("MACD")[1].split()[0])
-            macd = macd_val
-        except: pass
-    return rsi, macd
+# تحميل نموذج ذكاء صناعي جاهز (ResNet50 مُعدل)
+class ImageClassifier(nn.Module):
+    def __init__(self):
+        super(ImageClassifier, self).__init__()
+        self.model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        for param in self.model.parameters():
+            param.requires_grad = False
+        self.model.fc = nn.Sequential(
+            nn.Linear(self.model.fc.in_features, 128),
+            nn.ReLU(),
+            nn.Linear(128, 3)  # 3 فئات: صعود، هبوط، انتظار
+        )
 
-def analyze_market(rsi, macd):
-    if rsi > 70 and macd > 0:
-        return "📉 هبوط"
-    elif rsi < 30 and macd < 0:
-        return "📈 صعود"
-    else:
-        return "⏳ انتظار"
+    def forward(self, x):
+        return self.model(x)
 
-@client.event
-async def on_ready():
-    print(f"✅ Bot is online as {client.user}")
+# إنشاء النموذج وتحميله إلى الجهاز المتاح
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = ImageClassifier().to(device)
+model.eval()
 
+# دالة توقع القرار
+def predict_image(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    input_tensor = transform(image).unsqueeze(0).to(device)
+    with torch.no_grad():
+        output = model(input_tensor)
+    prediction = torch.argmax(output, dim=1).item()
+    labels = ['صعود 📈', 'هبوط 📉', 'انتظار ⏸️']
+    return labels[prediction]
+
+# الاستجابة للصور المرسلة
 @client.event
 async def on_message(message):
     if message.author == client.user:
         return
 
-    if message.attachments:
-        for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png']):
+    for attachment in message.attachments:
+        if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+            try:
                 image_bytes = await attachment.read()
-                gray_image = preprocess_image(image_bytes)
-                rsi, macd = extract_candles_and_indicators(gray_image)
-                decision = analyze_market(rsi, macd)
-                await message.channel.send(f"**نتيجة التحليل:**\n{decision}")
-                return
+                result = predict_image(image_bytes)
+                await message.channel.send(f"✅ التحليل: **{result}**")
+            except Exception as e:
+                await message.channel.send("⚠️ حدث خطأ أثناء التحليل.")
+                print(e)
 
-    elif message.content.lower() == "ping":
-        await message.channel.send("✅ البوت شغال 100%!")
-
+# بدء تشغيل البوت
 client.run(TOKEN)
