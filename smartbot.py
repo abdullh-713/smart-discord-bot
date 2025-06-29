@@ -1,79 +1,102 @@
-import os
-import random
-import datetime
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
+import io
+from PIL import Image
 
-# إعداد البوت
 intents = discord.Intents.default()
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+TOKEN = "YOUR_TOKEN_HERE"
 
-# قائمة عملات OTC
-OTC_SYMBOLS = [
-    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "AUDCAD_otc", "NZDUSD_otc",
-    "EURJPY_otc", "GBPJPY_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
-]
+# ----------- الزر التفاعلي مع القائمة مثل Aurix -----------
+class MyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.selected_symbol = None
+        self.selected_timeframe = None
+        self.selected_duration = None
 
-# قائمة توقيتات الدخول
-ENTRY_TIMES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]
-last_signal_time = None
+    @discord.ui.select(
+        placeholder="📊 اختر العملة",
+        options=[
+            discord.SelectOption(label="EURUSD_otc"),
+            discord.SelectOption(label="GBPUSD_otc"),
+            discord.SelectOption(label="USDJPY_otc"),
+            discord.SelectOption(label="AUDCAD_otc"),
+            discord.SelectOption(label="EURGBP_otc"),
+        ]
+    )
+    async def select_symbol(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.selected_symbol = select.values[0]
+        await interaction.response.send_message(f"✅ تم اختيار العملة: {self.selected_symbol}", ephemeral=True)
 
-# ✅ عند التشغيل
+    @discord.ui.select(
+        placeholder="⏱️ اختر الفريم الزمني",
+        options=[
+            discord.SelectOption(label="5s"),
+            discord.SelectOption(label="10s"),
+            discord.SelectOption(label="30s"),
+            discord.SelectOption(label="1m"),
+            discord.SelectOption(label="5m"),
+        ]
+    )
+    async def select_timeframe(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.selected_timeframe = select.values[0]
+        await interaction.response.send_message(f"✅ تم اختيار الفريم: {self.selected_timeframe}", ephemeral=True)
+
+    @discord.ui.select(
+        placeholder="📅 مدة الصفقة",
+        options=[
+            discord.SelectOption(label="10s"),
+            discord.SelectOption(label="30s"),
+            discord.SelectOption(label="1m"),
+            discord.SelectOption(label="2m"),
+            discord.SelectOption(label="5m"),
+        ]
+    )
+    async def select_duration(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.selected_duration = select.values[0]
+        await interaction.response.send_message(f"✅ مدة الصفقة: {self.selected_duration}", ephemeral=True)
+
+    @discord.ui.button(label="تحليل مباشر من الشاشة 🧠", style=discord.ButtonStyle.success)
+    async def analyze_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("📸 أرسل صورة الآن لتحليلها.", ephemeral=True)
+
+
+# ----------- أمر تشغيل البوت وبدء القائمة -----------
+@bot.tree.command(name="start", description="ابدأ تشغيل البوت الذكي")
+async def start_command(interaction: discord.Interaction):
+    view = MyView()
+    await interaction.response.send_message("👋 مرحبًا، يرجى اختيار الإعدادات من القائمة:", view=view, ephemeral=True)
+
+# ----------- استقبال الصور وتحليلها -----------
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.content_type.startswith("image"):
+                image_bytes = await attachment.read()
+                image = Image.open(io.BytesIO(image_bytes))
+                result = analyze_image(image)
+                await message.channel.send(f"📈 النتيجة: **{result}**")
+    await bot.process_commands(message)
+
+# ----------- تحليل الصورة بشكل وهمي (قم بربطه بتحليل حقيقي لاحقًا) -----------
+def analyze_image(image):
+    # هنا تضع تحليل احترافي حقيقي باستخدام مؤشرات RSI/MACD/Bollinger...
+    return "صعود"  # أو "هبوط" أو "انتظار"
+
+# ----------- تشغيل البوت -----------
 @bot.event
 async def on_ready():
-    print(f"✅ Aurix-style bot active as: {bot.user}")
     try:
         synced = await bot.tree.sync()
-        print(f"🟢 Synced {len(synced)} command(s)")
+        print(f"✅ Aurix-style bot active as: {bot.user} ({len(synced)} commands synced)")
     except Exception as e:
-        print(f"❌ Sync failed: {e}")
-    aurix_loop.start()
+        print(f"❌ Error syncing commands: {e}")
 
-# ✅ أمر /start من نوع سلاش
-@bot.tree.command(name="start", description="ابدأ تحليل Aurix")
-async def start(interaction: discord.Interaction):
-    view = AurixButton()
-    await interaction.response.send_message("👋 مرحبًا بك في نظام إشارات Aurix\nاضغط على الزر أدناه لبدء التحليل ⬇️", view=view)
-
-# ✅ الزر التفاعلي
-class AurixButton(discord.ui.View):
-    @discord.ui.button(label="ابدأ التحليل", style=discord.ButtonStyle.success)
-    async def start_analysis(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await send_aurix_signal(interaction.channel)
-
-# ✅ إشارات تلقائية كل 5 دقائق
-@tasks.loop(seconds=1.0)
-async def aurix_loop():
-    global last_signal_time
-    now = datetime.datetime.utcnow()
-    minute = now.strftime("%M")
-    second = now.strftime("%S")
-
-    if second == "00" and minute in ENTRY_TIMES:
-        if last_signal_time == now.strftime("%H:%M"):
-            return
-        last_signal_time = now.strftime("%H:%M")
-
-        for guild in bot.guilds:
-            for channel in guild.text_channels:
-                if channel.permissions_for(guild.me).send_messages:
-                    await send_aurix_signal(channel)
-                    return
-
-# ✅ إرسال إشارة
-async def send_aurix_signal(channel):
-    symbol = random.choice(OTC_SYMBOLS)
-    decision = random.choice(["📈 صعود", "📉 هبوط"])
-    now = datetime.datetime.utcnow().strftime('%H:%M:%S')
-
-    await channel.send(
-        f"🧠 **إشارة Aurix**\n"
-        f"💱 العملة: `{symbol}`\n"
-        f"🕒 الوقت: `{now}`\n"
-        f"📊 القرار: **{decision}**\n"
-        f"📂 [نظام التكرار الزمني مفعل ✅]"
-    )
-
-# ✅ تشغيل البوت باستخدام التوكن من المتغير البيئي
-bot.run(os.getenv("TOKEN"))
+bot.run(TOKEN)
