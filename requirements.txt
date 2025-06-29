@@ -3,7 +3,7 @@ python-dotenv
 ccxt
 matplotlib
 Pillow
-opencv-python
+opencv-python-headless
 numpy
 aiohttp
 requests
