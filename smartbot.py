@@ -1,61 +1,61 @@
 import os
 import discord
 from discord.ext import commands
-from PIL import Image
 import requests
 from io import BytesIO
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
+from PIL import Image
+from transformers import AutoProcessor, AutoModelForImageClassification
+import torch
+from dotenv import load_dotenv
 
-TOKEN = os.getenv("TOKEN")
+# تحميل متغيرات البيئة
+load_dotenv()
+TOKEN = os.getenv("TOKEN")  # تأكد أن متغير البيئة TOKEN موجود في Railway
 
+# إعداد البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def analyze_image(image: Image.Image) -> str:
-    """
-    تحليل الصورة يدويًا لاستخلاص قرار: صعود، هبوط، انتظار
-    بناءً على شكل الشموع + RSI + MACD + Bollinger Bands
-    """
-    # تحويل الصورة إلى OpenCV
-    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-
-    # استخراج القسم السفلي (المؤشرات)
-    h, w, _ = img_cv.shape
-    indicators_crop = img_cv[int(h * 0.78):, :]
-
-    # مؤقتًا: استخدام اللون لتقدير الاتجاه (تحليل بدائي كمثال)
-    green_pixels = np.sum(np.all(indicators_crop > [0, 180, 0], axis=-1))
-    red_pixels = np.sum(np.all(indicators_crop > [180, 0, 0], axis=-1))
-
-    if green_pixels > red_pixels * 1.5:
-        return "📈 صعود"
-    elif red_pixels > green_pixels * 1.5:
-        return "📉 هبوط"
-    else:
-        return "⏳ انتظار"
+# تحميل النموذج والمعالج
+processor = AutoProcessor.from_pretrained("microsoft/dit-base-finetuned-rvlcdip")
+model = AutoModelForImageClassification.from_pretrained("microsoft/dit-base-finetuned-rvlcdip")
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is running as {bot.user}")
+    print(f"✅ Bot connected as {bot.user}")
 
 @bot.event
 async def on_message(message):
+    # تجاهل رسائل البوت نفسه
     if message.author == bot.user:
         return
 
+    # إذا احتوت الرسالة على صورة
     if message.attachments:
         for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+            if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 try:
-                    image_bytes = await attachment.read()
-                    image = Image.open(BytesIO(image_bytes))
-                    result = analyze_image(image)
-                    await message.channel.send(f"📊 Prediction: **{result}**")
+                    image_url = attachment.url
+                    image_data = requests.get(image_url).content
+                    image = Image.open(BytesIO(image_data)).convert("RGB")
+
+                    # تجهيز الصورة للنموذج
+                    inputs = processor(images=image, return_tensors="pt")
+                    with torch.no_grad():
+                        outputs = model(**inputs)
+
+                    logits = outputs.logits
+                    predicted_class_idx = logits.argmax(-1).item()
+                    predicted_label = model.config.id2label[predicted_class_idx]
+
+                    await message.channel.send(f"📊 Prediction: **{predicted_label}**")
+
                 except Exception as e:
-                    await message.channel.send(f"❌ Error: {str(e)}")
+                    await message.channel.send("❌ حدث خطأ أثناء تحليل الصورة.")
+                    print(f"Error: {e}")
 
     await bot.process_commands(message)
+
+# تشغيل البوت
+bot.run(TOKEN)
