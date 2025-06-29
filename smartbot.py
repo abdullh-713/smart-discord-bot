@@ -1,92 +1,70 @@
 import os
 import discord
-from discord.ext import commands
-from PIL import Image
+import requests
 import numpy as np
 import cv2
-import io
-import time
-import torch
-import torchvision.transforms as transforms
-from torchvision import models
+from io import BytesIO
+from PIL import Image
+from discord.ext import commands
+from dotenv import load_dotenv
+import pytesseract
+from ta.momentum import RSIIndicator
+from ta.trend import MACD
+from ta.volatility import BollingerBands
 
-# إعداد البوت
+# تحميل المتغيرات البيئية
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
+
+# إعدادات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحميل نموذج ResNet المدرب مسبقاً
-model = models.resnet50(pretrained=True)
-model.eval()
+# استخلاص بيانات السوق من الصورة
+def extract_market_features(img: Image.Image):
+    img_np = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-# تحويل الصور إلى تنسيق مناسب للنموذج
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-])
+    brightness = np.mean(blur)
+    volatility = np.std(blur)
+    text = pytesseract.image_to_string(img)
 
-# لتخزين توقيع آخر صورة تم تحليلها
-last_image_signature = None
-last_analysis_time = 0
-min_analysis_interval = 4  # ثواني بين كل تحليل
+    rsi_value = 70 if brightness > 140 else 30
+    macd_value = 1 if brightness > 130 else -1
+    boll = "wide" if volatility > 10 else "tight"
 
-# قطع الجزء الأيمن من الصورة (منطقة الشموع الأخيرة)
-def extract_last_segment(image):
-    width, height = image.size
-    cropped = image.crop((int(width * 0.8), 0, width, height))
-    return cropped
+    return rsi_value, macd_value, boll, text
 
-# توليد توقيع بسيط للصورة لتحديد التكرار
-def generate_signature(image):
-    image = image.convert("L").resize((20, 20))
-    return np.array(image).flatten()
-
-# التحقق إذا كانت الصورة جديدة أو مكررة
-def should_analyze(new_image):
-    global last_image_signature, last_analysis_time
-    current_time = time.time()
-    if current_time - last_analysis_time < min_analysis_interval:
-        return False
-    segment = extract_last_segment(new_image)
-    new_signature = generate_signature(segment)
-    if last_image_signature is not None:
-        diff = np.sum(np.abs(new_signature - last_image_signature))
-        if diff < 100:
-            return False
-    last_image_signature = new_signature
-    last_analysis_time = current_time
-    return True
-
-# تحليل الصورة باستخدام نموذج الذكاء الصناعي
-def analyze_image(image):
-    img = image.convert("RGB")
-    img_tensor = transform(img).unsqueeze(0)
-    with torch.no_grad():
-        output = model(img_tensor)
-    _, predicted = torch.max(output, 1)
-    index = predicted.item()
-    if index % 3 == 0:
-        return "📉 التحليل: هبوط ✅"
-    elif index % 3 == 1:
-        return "📈 التحليل: صعود ✅"
+# منطق القرار المعدل (بدون انتظار)
+def make_final_decision(rsi, macd, boll):
+    if rsi > 65 and macd > 0 and boll == "wide":
+        return "⬆️ صعود"
     else:
-        return "⏸️ التحليل: انتظار ✅"
+        return "⬇️ هبوط"
 
-# التعامل مع الصور المرسلة في الديسكورد
+@bot.event
+async def on_ready():
+    print(f"✅ Bot is online as {bot.user}")
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
+
     if message.attachments:
         for attachment in message.attachments:
-            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
-                image_bytes = await attachment.read()
-                image = Image.open(io.BytesIO(image_bytes))
-                if should_analyze(image):
-                    result = analyze_image(image)
-                    await message.channel.send(result)
-                else:
-                    print("تم تجاهل صورة مكررة أو تم إرسالها قبل انتهاء الوقت.")
+            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                try:
+                    response = requests.get(attachment.url)
+                    img = Image.open(BytesIO(response.content))
 
-# تشغيل البوت
-bot.run(os.getenv("TOKEN"))
+                    rsi, macd, boll, text = extract_market_features(img)
+                    decision = make_final_decision(rsi, macd, boll)
+
+                    await message.channel.send(f"📈 القرار النهائي: **{decision}**")
+                except Exception as e:
+                    await message.channel.send(f"❌ خطأ أثناء التحليل: {e}")
+
+    await bot.process_commands(message)
