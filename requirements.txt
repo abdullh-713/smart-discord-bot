@@ -20,6 +20,7 @@ pytesseract
 # ذكاء اصطناعي وتحليل عميق
 transformers
 torch
+torchvision
 scikit-learn
 scipy
 
