@@ -1,70 +1,87 @@
-import os
 import discord
-import requests
-import numpy as np
+import os
 import cv2
-from io import BytesIO
+import numpy as np
+import torch
+import torchvision.transforms as transforms
+from torchvision import models
 from PIL import Image
-from discord.ext import commands
 from dotenv import load_dotenv
-import pytesseract
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-from ta.volatility import BollingerBands
+import hashlib
+from datetime import datetime
 
 # تحميل المتغيرات البيئية
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# إعدادات البوت
+# إعدادات Discord
 intents = discord.Intents.default()
+intents.messages = True
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+client = discord.Client(intents=intents)
 
-# استخلاص بيانات السوق من الصورة
-def extract_market_features(img: Image.Image):
-    img_np = np.array(img.convert("RGB"))
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+# قاعدة بيانات بسيطة للصور المُعالجة
+processed_hashes = {}
 
-    brightness = np.mean(blur)
-    volatility = np.std(blur)
-    text = pytesseract.image_to_string(img)
+# تحميل نموذج ذكاء صناعي مُدرب مسبقًا
+model = models.resnet50(pretrained=True)
+model.eval()
 
-    rsi_value = 70 if brightness > 140 else 30
-    macd_value = 1 if brightness > 130 else -1
-    boll = "wide" if volatility > 10 else "tight"
+# تصنيفات وهمية: 0 = هبوط، 1 = صعود
+labels = ["هبوط", "صعود"]
 
-    return rsi_value, macd_value, boll, text
+# تحويل الصور إلى شكل يمكن للنموذج قراءته
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor()
+])
 
-# منطق القرار المعدل (بدون انتظار)
-def make_final_decision(rsi, macd, boll):
-    if rsi > 65 and macd > 0 and boll == "wide":
-        return "⬆️ صعود"
-    else:
-        return "⬇️ هبوط"
+# دالة التحقق من تكرار الصورة
+def is_duplicate(image_bytes):
+    image_hash = hashlib.md5(image_bytes).hexdigest()
+    current_minute = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if processed_hashes.get(current_minute) == image_hash:
+        return True
+    processed_hashes[current_minute] = image_hash
+    return False
 
-@bot.event
+# دالة تحليل الصورة وإعطاء القرار
+def predict_image(image_bytes):
+    image = Image.open(image_bytes).convert("RGB")
+    input_tensor = transform(image).unsqueeze(0)
+
+    with torch.no_grad():
+        outputs = model(input_tensor)
+        _, predicted = torch.max(outputs, 1)
+
+    return labels[predicted.item()]
+
+# عند تشغيل البوت
+@client.event
 async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
+    print(f"✅ تم تسجيل الدخول كبوت: {client.user}")
 
-@bot.event
+# عند استقبال رسالة
+@client.event
 async def on_message(message):
-    if message.author == bot.user:
+    if message.author == client.user:
         return
 
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+            if any(attachment.filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
                 try:
-                    response = requests.get(attachment.url)
-                    img = Image.open(BytesIO(response.content))
+                    image_bytes = await attachment.read()
 
-                    rsi, macd, boll, text = extract_market_features(img)
-                    decision = make_final_decision(rsi, macd, boll)
+                    if is_duplicate(image_bytes):
+                        await message.channel.send("⚠️ تم تجاهل صورة مكررة أو تم إرسالها قبل انتهاء الوقت.")
+                        return
 
-                    await message.channel.send(f"📈 القرار النهائي: **{decision}**")
+                    decision = predict_image(image_bytes=Image.open(io.BytesIO(image_bytes)))
+                    await message.channel.send(f"📈 القرار: **{decision}**")
+
                 except Exception as e:
-                    await message.channel.send(f"❌ خطأ أثناء التحليل: {e}")
+                    await message.channel.send(f"حدث خطأ أثناء تحليل الصورة ❌: {str(e)}")
 
-    await bot.process_commands(message)
+# تشغيل البوت
+client.run(TOKEN)
