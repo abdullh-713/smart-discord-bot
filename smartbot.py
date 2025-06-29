@@ -19,16 +19,16 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# إعدادات البوت
+# إعداد البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحميل نموذج ذكاء صناعي لتحليل الصور
+# تحميل النموذج الذكاء الصناعي
 processor = AutoImageProcessor.from_pretrained("microsoft/resnet-50")
 model = AutoModelForImageClassification.from_pretrained("microsoft/resnet-50")
 
-# استخراج مؤشرات من الصورة
+# تحليل الصورة واستخراج المؤشرات
 def extract_market_features(img: Image.Image):
     img_np = np.array(img.convert("RGB"))
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
@@ -39,13 +39,14 @@ def extract_market_features(img: Image.Image):
 
     text = pytesseract.image_to_string(img)
 
+    # إعداد قيم وهمية للمؤشرات
     rsi_value = 70 if brightness > 140 else 30
     macd_value = 1 if brightness > 130 else -1
     boll = "tight" if volatility < 10 else "wide"
 
     return rsi_value, macd_value, boll, text
 
-# اتخاذ القرار النهائي
+# اتخاذ القرار
 def make_final_decision(rsi, macd, boll):
     if rsi > 65 and macd > 0 and boll == "wide":
         return "⬇️ هبوط"
@@ -63,6 +64,7 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
+    # استقبال الصور
     if message.attachments:
         for attachment in message.attachments:
             if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
