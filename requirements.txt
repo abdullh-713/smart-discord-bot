@@ -2,14 +2,24 @@
 discord.py==2.0.0
 python-dotenv
 
-# تحليل الصور
+# الرؤية الحاسوبية
 opencv-python-headless
 numpy
 pillow
+requests
+aiohttp
 
-# ذكاء صناعي مبسط
+# التحليل الفني
+ta==0.10.2
+pandas
+matplotlib
+
+# الذكاء الاصطناعي
+transformers
 torch
 torchvision
+scikit-learn
+scipy
 
-# إضافية ضرورية
-aiohttp
+# نماذج HuggingFace
+sentencepiece
