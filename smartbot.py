@@ -1,10 +1,11 @@
-import discord
-from discord.ext import commands, tasks
+import os
 import datetime
 import random
-import os
+import discord
+from discord.ext import commands, tasks
 
-# تعريف البوت
+TOKEN = os.getenv("TOKEN")  # تأكد أن المتغير TOKEN موجود في Railway
+
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -15,13 +16,13 @@ OTC_SYMBOLS = [
     "EURJPY_otc", "GBPJPY_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
 ]
 
-# أوقات الدخول
+# أوقات الدخول الثابتة
 ENTRY_TIMES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]
 last_signal_time = None
 
 @bot.event
 async def on_ready():
-    print(f"✅ Aurix-style logic active under: {bot.user}")
+    print(f"✅ Aurix-style bot is active: {bot.user}")
     aurix_loop.start()
 
 @tasks.loop(seconds=1.0)
@@ -50,13 +51,11 @@ async def send_aurix_signal(channel):
     now = datetime.datetime.utcnow().strftime('%H:%M:%S')
 
     await channel.send(
-        f"🧠 **إشارة Aurix**\n"
+        f"🧠 **إشارة Aurix AI**\n"
         f"💱 العملة: `{symbol}`\n"
         f"🕒 الوقت: `{now}`\n"
         f"📊 القرار: **{decision}**\n"
-        f"📂 [نظام التكرار الزمني مفعل]"
+        f"📂 النظام: تكرار ذكي يعتمد على التوقيت الثابت"
     )
 
-# تشغيل البوت من التوكن البيئي
-TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
