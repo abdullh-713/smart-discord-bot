@@ -1,74 +1,90 @@
 import os
+import random
 import asyncio
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
+from dotenv import load_dotenv
 
+load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# العملات والفريمات
-symbols = ["EURUSD", "GBPUSD", "USDJPY"]
-timeframes = ["1m", "2m", "5m"]
+# قائمة العملات
+OTC_SYMBOLS = [
+    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "AUDCAD_otc", "EURJPY_otc",
+    "GBPJPY_otc", "NZDUSD_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
+]
 
-# إشارات وهمية محفوظة مسبقًا لكل عملة وفريم (تُكرر تلقائيًا)
+# قائمة الفريمات
+TIMEFRAMES = ["5s", "15s", "30s", "1m", "2m", "5m"]
+
+# إشارات وهمية لكل زوج عملة وفريم (يجب تعديلها لاحقًا بإشارات حقيقية)
 signals = {
-    "EURUSD_1m": ["صعود", "هبوط", "صعود", "صعود", "هبوط"],
-    "EURUSD_2m": ["هبوط", "صعود", "هبوط", "صعود", "هبوط"],
-    "EURUSD_5m": ["صعود", "صعود", "هبوط", "هبوط", "صعود"],
-    "GBPUSD_1m": ["هبوط", "هبوط", "صعود", "صعود", "هبوط"],
-    "GBPUSD_2m": ["صعود", "هبوط", "صعود", "هبوط", "صعود"],
-    "GBPUSD_5m": ["هبوط", "صعود", "صعود", "هبوط", "هبوط"],
-    "USDJPY_1m": ["صعود", "صعود", "هبوط", "هبوط", "صعود"],
-    "USDJPY_2m": ["هبوط", "صعود", "هبوط", "صعود", "هبوط"],
-    "USDJPY_5m": ["صعود", "هبوط", "صعود", "صعود", "هبوط"]
+    (symbol, tf): [random.choice(["📈 صعود", "📉 هبوط"]) for _ in range(50)]
+    for symbol in OTC_SYMBOLS
+    for tf in TIMEFRAMES
 }
 
-# متغيرات لتتبع الاختيارات
-user_symbol = {}
-user_timeframe = {}
-user_index = {}
+# الجلسات النشطة
+user_sessions = {}
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is ready. Logged in as {bot.user.name}")
+    print(f"✅ Bot is running as {bot.user}")
 
-@bot.command()
-async def ابدأ(ctx):
-    keyboard = [[discord.ui.Button(label=s, style=discord.ButtonStyle.primary)] for s in symbols]
-    view = discord.ui.View()
-    for row in keyboard:
-        for btn in row:
-            view.add_item(btn)
-            btn.callback = lambda i, s=btn.label: asyncio.create_task(select_symbol(ctx, i, s))
-    await ctx.send("🪙 اختر العملة:", view=view)
+@bot.command(name="start")
+async def start(ctx):
+    keyboard = discord.ui.View()
+    for symbol in OTC_SYMBOLS:
+        keyboard.add_item(discord.ui.Button(label=symbol, style=discord.ButtonStyle.primary, custom_id=f"symbol:{symbol}"))
+    await ctx.send("اختر عملة OTC:", view=keyboard)
 
-async def select_symbol(ctx, interaction, symbol):
-    user_symbol[ctx.author.id] = symbol
-    keyboard = [[discord.ui.Button(label=t, style=discord.ButtonStyle.secondary)] for t in timeframes]
-    view = discord.ui.View()
-    for row in keyboard:
-        for btn in row:
-            view.add_item(btn)
-            btn.callback = lambda i, t=btn.label: asyncio.create_task(start_signals(ctx, i, t))
-    await interaction.response.edit_message(content=f"✅ تم اختيار العملة: `{symbol}`\n⏱ الآن اختر الفريم:", view=view)
+class ButtonHandler(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=None)
+        self.user_id = user_id
 
-async def start_signals(ctx, interaction, timeframe):
-    uid = ctx.author.id
-    symbol = user_symbol.get(uid)
-    tf_key = f"{symbol}_{timeframe}"
-    user_timeframe[uid] = tf_key
-    user_index[uid] = 0
-    await interaction.response.edit_message(content=f"✅ بدأ إرسال الإشارات لـ `{tf_key}` كل 15 ثانية.", view=None)
-    send_signal.start(ctx)
+    @discord.ui.button(label="-", style=discord.ButtonStyle.secondary, disabled=True)
+    async def placeholder(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass  # فقط كـ placeholder
 
-@tasks.loop(seconds=15)
-async def send_signal(ctx):
-    uid = ctx.author.id
-    tf_key = user_timeframe.get(uid)
-    index = user_index.get(uid, 0)
-    if tf_key in signals:
-        signal = signals[tf_key][index % len(signals[tf_key])]
-        await ctx.send(f"📊 إشـارة ({tf_key}) 👉 `{signal}`")
-        user_index[uid] = index + 1
+    async def interaction_check(self, interaction: discord.Interaction):
+        return interaction.user.id == self.user_id
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.data["component_type"] != 2:
+        return
+
+    custom_id = interaction.data["custom_id"]
+
+    if custom_id.startswith("symbol:"):
+        selected_symbol = custom_id.split(":")[1]
+        user_sessions[interaction.user.id] = {"symbol": selected_symbol}
+        # قائمة الفريمات
+        view = discord.ui.View()
+        for tf in TIMEFRAMES:
+            view.add_item(discord.ui.Button(label=tf, style=discord.ButtonStyle.success, custom_id=f"timeframe:{tf}"))
+        await interaction.response.send_message(f"✅ تم اختيار العملة: `{selected_symbol}`\nاختر الفريم الزمني:", view=view, ephemeral=True)
+
+    elif custom_id.startswith("timeframe:"):
+        selected_tf = custom_id.split(":")[1]
+        session = user_sessions.get(interaction.user.id)
+        if not session or "symbol" not in session:
+            await interaction.response.send_message("❌ لم تقم باختيار العملة أولًا. ابدأ من جديد بـ !start", ephemeral=True)
+            return
+
+        symbol = session["symbol"]
+        await interaction.response.send_message(f"✅ جاري إرسال الإشارات لـ `{symbol}` على فريم `{selected_tf}` كل دقيقة...")
+
+        # إرسال الإشارات كل 60 ثانية
+        async def signal_loop():
+            for signal in signals[(symbol, selected_tf)]:
+                await interaction.followup.send(f"إشارة جديدة ({symbol} - {selected_tf}): {signal}")
+                await asyncio.sleep(60)
+
+        bot.loop.create_task(signal_loop())
+
+bot.run(TOKEN)
