@@ -1,60 +1,65 @@
 import os
 import discord
-from discord.ext import commands, tasks
-import datetime
-import random
+from discord.ext import commands
+from discord import app_commands
 
-# استخدم التوكن من متغير البيئة
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
+client = commands.Bot(command_prefix="/", intents=intents)
 
-# قائمة العملات OTC المعتمدة
 OTC_SYMBOLS = [
-    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "AUDCAD_otc", "NZDUSD_otc",
-    "EURJPY_otc", "GBPJPY_otc", "EURNZD_otc", "EURGBP_otc", "CADCHF_otc"
+    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
+    "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc"
 ]
 
-# جدول الفترات الزمنية التي يتم فيها إرسال الإشارة (كل 5 دقائق)
-ENTRY_TIMES = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]
-last_signal_time = None
+TIMEFRAMES = ["5s", "10s", "30s", "1min", "2min", "5min"]
 
-@bot.event
+SIGNALS = {
+    symbol: {
+        tf: f"🧠 إشارة Aurix\n💱 العملة: {symbol}\n🕒 الوقت: 12:{str(i*5).zfill(2)}:00\n📈 القرار: {'صعود' if i % 2 == 0 else 'هبوط'}\n📂 [نظام التكرار الزمني مفعل ✅]"
+        for i, tf in enumerate(TIMEFRAMES)
+    }
+    for symbol in OTC_SYMBOLS
+}
+
+@client.event
 async def on_ready():
-    print(f"✅ Aurix-style bot is running as {bot.user}")
-    aurix_loop.start()
+    print(f"✅ Bot is ready as {client.user}")
+    try:
+        synced = await client.tree.sync()
+        print(f"✅ Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
 
-@tasks.loop(seconds=1.0)
-async def aurix_loop():
-    global last_signal_time
-    now = datetime.datetime.utcnow()
-    minute = now.strftime("%M")
-    second = now.strftime("%S")
+@client.tree.command(name="start", description="ابدأ إشارات Aurix")
+async def start(interaction: discord.Interaction):
+    symbol_options = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
+    symbol_menu = discord.ui.Select(placeholder="🔽 اختر العملة", options=symbol_options)
 
-    # إذا وصل الوقت إلى بداية دقيقة جديدة وفي جدول الإشارات
-    if second == "00" and minute in ENTRY_TIMES:
-        if last_signal_time == now.strftime("%H:%M"):
-            return  # لا ترسل الإشارة مرتين لنفس الوقت
-        last_signal_time = now.strftime("%H:%M")
+    async def symbol_callback(interaction2: discord.Interaction):
+        selected_symbol = symbol_menu.values[0]
+        await ask_timeframe(interaction2, selected_symbol)
 
-        for guild in bot.guilds:
-            for channel in guild.text_channels:
-                if channel.permissions_for(guild.me).send_messages:
-                    await send_aurix_signal(channel)
-                    return  # أرسل إلى قناة واحدة فقط
+    symbol_menu.callback = symbol_callback
 
-async def send_aurix_signal(channel):
-    symbol = random.choice(OTC_SYMBOLS)
-    decision = random.choice(["📈 صعود", "📉 هبوط"])
-    now = datetime.datetime.utcnow().strftime('%H:%M:%S')
+    view = discord.ui.View()
+    view.add_item(symbol_menu)
+    await interaction.response.send_message("🔰 اختر العملة:", view=view, ephemeral=True)
 
-    await channel.send(
-        f"🧠 **إشارة Aurix**\n"
-        f"💱 العملة: `{symbol}`\n"
-        f"🕒 الوقت: `{now}`\n"
-        f"📊 القرار: **{decision}**\n"
-        f"📂 [نظام التكرار الزمني مفعل ✅]"
-    )
+async def ask_timeframe(interaction, symbol):
+    timeframe_options = [discord.SelectOption(label=tf) for tf in TIMEFRAMES]
+    timeframe_menu = discord.ui.Select(placeholder="🔽 اختر الفريم الزمني", options=timeframe_options)
 
-bot.run(TOKEN)
+    async def timeframe_callback(interaction2: discord.Interaction):
+        selected_tf = timeframe_menu.values[0]
+        msg = SIGNALS.get(symbol, {}).get(selected_tf, "❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
+        await interaction2.response.send_message(msg)
+
+    timeframe_menu.callback = timeframe_callback
+
+    view = discord.ui.View()
+    view.add_item(timeframe_menu)
+    await interaction.followup.send(f"✅ اختر الفريم لإشارة **{symbol}**:", view=view, ephemeral=True)
+
+client.run(TOKEN)
