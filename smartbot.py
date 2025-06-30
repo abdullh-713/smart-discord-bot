@@ -1,81 +1,79 @@
-import os
 import discord
 from discord.ext import commands
-from discord import app_commands
+from PIL import Image
+import torch
+import torchvision.transforms as transforms
+from torchvision import models
 import json
+import datetime
+import os
 
-# تحميل جدول الإشارات المدمج
+# تحميل جدول الإشارات
 with open("full_signal_table.json", "r", encoding="utf-8") as f:
-    SIGNALS = json.load(f)
+    SIGNAL_TABLE = json.load(f)
 
+# إعدادات البوت
 TOKEN = os.getenv("TOKEN")
-
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
-tree = bot.tree
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-OTC_SYMBOLS = [
-    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
-    "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc"
-]
+# تحميل نموذج الذكاء الصناعي
+model = models.resnet50(pretrained=True)
+model.fc = torch.nn.Linear(model.fc.in_features, 3)
+model.eval()
 
-TIMEFRAMES = ["1min", "2min", "3min", "5min"]
+# الفئات: 0 = هبوط، 1 = صعود، 2 = انتظار
+LABELS = ["هبوط", "صعود", "انتظار"]
 
-@tree.command(name="start", description="ابدأ البوت واختر العملة")
-async def start_command(interaction: discord.Interaction):
-    options = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
-
-    select = discord.ui.Select(placeholder="اختر العملة ⬇️", options=options)
-
-    async def select_callback(select_interaction: discord.Interaction):
-        selected_symbol = select.values[0]
-        await ask_timeframe(select_interaction, selected_symbol)
-
-    view = discord.ui.View()
-    select.callback = select_callback
-    view.add_item(select)
-    await interaction.response.send_message("📗 اختر العملة:", view=view, ephemeral=True)
-
-async def ask_timeframe(interaction: discord.Interaction, symbol):
-    options = [discord.SelectOption(label=frame) for frame in TIMEFRAMES]
-
-    select = discord.ui.Select(placeholder=f"اختر الفريم الزمني لإشارة {symbol} ✅", options=options)
-
-    async def select_callback(select_interaction: discord.Interaction):
-        selected_frame = select.values[0]
-        await send_signal(select_interaction, symbol, selected_frame)
-
-    view = discord.ui.View()
-    select.callback = select_callback
-    view.add_item(select)
-    await interaction.response.send_message(f"✅ اختر الفريم الزمني لإشارة:\n**{symbol}**", view=view, ephemeral=True)
-
-async def send_signal(interaction: discord.Interaction, symbol, timeframe):
-    data = SIGNALS.get(symbol, {}).get(timeframe, [])
-    if not data:
-        await interaction.response.send_message("❌ لا توجد إشارة حالياً لهذه العملة والفريم.", ephemeral=True)
-        return
-
-    # احضار أول إشارة قادمة (نموذجية)
-    next_signal = data[0]
-    decision = next_signal["decision"]
-    time_str = next_signal["time"]
-
-    msg = f"""**إشارة Aurix 🧠**
-العملة: `{symbol}`
-🕰️ الوقت: `{time_str}`
-📈 القرار: `{decision}`
-📁 [نظام التكرار الزمني مفعل ✅]"""
-
-    await interaction.response.send_message(msg)
+# تحويل الصور للإدخال في النموذج
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor()
+])
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is ready as {bot.user}")
+    print(f"✅ تسجيل الدخول كن {bot.user}")
+
+@bot.command()
+async def اشارة(ctx, العملة: str, الفريم: str):
+    """يستخرج الإشارة من الجدول"""
     try:
-        synced = await tree.sync()
-        print(f"✅ Synced {len(synced)} command(s)")
+        now = datetime.datetime.utcnow()
+        current_time = now.strftime("%H:%M")
+
+        if العملة in SIGNAL_TABLE and الفريم in SIGNAL_TABLE[العملة]:
+            for entry in SIGNAL_TABLE[العملة][الفريم]:
+                if entry["time"] == current_time:
+                    await ctx.send(f"📊 العملة: {العملة}\n⏰ الوقت: {current_time}\n📈 القرار: {entry['decision']}")
+                    return
+        await ctx.send("❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
     except Exception as e:
-        print(f"❌ Error syncing commands: {e}")
+        await ctx.send(f"⚠️ خطأ: {e}")
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.filename.lower().endswith(("jpg", "jpeg", "png")):
+                await message.channel.send("📥 جاري تحليل الصورة...")
+                img_path = f"/tmp/{attachment.filename}"
+                await attachment.save(img_path)
+
+                image = Image.open(img_path).convert("RGB")
+                image_tensor = transform(image).unsqueeze(0)
+
+                with torch.no_grad():
+                    prediction = model(image_tensor)
+                    label_index = torch.argmax(prediction, dim=1).item()
+                    result = LABELS[label_index]
+
+                await message.channel.send(f"✅ النتيجة: **{result}**")
+                os.remove(img_path)
+    await bot.process_commands(message)
 
 bot.run(TOKEN)
