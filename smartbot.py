@@ -2,63 +2,80 @@ import os
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ui import View, Select
+import json
+
+# تحميل جدول الإشارات المدمج
+with open("full_signal_table.json", "r", encoding="utf-8") as f:
+    SIGNALS = json.load(f)
 
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
-client = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
+tree = bot.tree
 
 OTC_SYMBOLS = [
     "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
     "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc"
 ]
 
-TIMEFRAMES = ["5s", "10s", "30s", "1min", "2min", "5min"]
+TIMEFRAMES = ["1min", "2min", "3min", "5min"]
 
-SIGNALS = {
-    "EURUSD_otc": {
-        "5s": "📊 إشـارة Aurix\n💱 العملة: EURUSD_otc\n🕒 الوقت: 12:00:00\n📈 القرار: صعود\n📂 نظام التكرار الزمني مفعل ✅",
-        "10s": "📊 إشـارة Aurix\n💱 العملة: EURUSD_otc\n🕒 الوقت: 12:05:00\n📉 القرار: هبوط\n📂 نظام التكرار الزمني مفعل ✅"
-    },
-    "CADCHF_otc": {
-        "5s": "📊 إشـارة Aurix\n💱 العملة: CADCHF_otc\n🕒 الوقت: 12:10:00\n📈 القرار: صعود\n📂 نظام التكرار الزمني مفعل ✅",
-        "10s": "📊 إشـارة Aurix\n💱 العملة: CADCHF_otc\n🕒 الوقت: 12:15:00\n📉 القرار: هبوط\n📂 نظام التكرار الزمني مفعل ✅"
-    }
-}
+@tree.command(name="start", description="ابدأ البوت واختر العملة")
+async def start_command(interaction: discord.Interaction):
+    options = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
 
-class TimeframeMenu(Select):
-    def __init__(self, symbol):
-        self.symbol = symbol
-        options = [discord.SelectOption(label=tf, description=f"عرض إشارة {symbol} لفريم {tf}") for tf in TIMEFRAMES]
-        super().__init__(placeholder="🔽 اختر الفريم الزمني", options=options)
+    select = discord.ui.Select(placeholder="اختر العملة ⬇️", options=options)
 
-    async def callback(self, interaction: discord.Interaction):
-        signal = SIGNALS.get(self.symbol, {}).get(self.values[0], "❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
-        await interaction.response.send_message(signal, ephemeral=True)
+    async def select_callback(select_interaction: discord.Interaction):
+        selected_symbol = select.values[0]
+        await ask_timeframe(select_interaction, selected_symbol)
 
-class SymbolMenu(Select):
-    def __init__(self):
-        options = [discord.SelectOption(label=symbol, description=f"اختر {symbol}") for symbol in OTC_SYMBOLS]
-        super().__init__(placeholder="🔽 اختر العملة", options=options)
+    view = discord.ui.View()
+    select.callback = select_callback
+    view.add_item(select)
+    await interaction.response.send_message("📗 اختر العملة:", view=view, ephemeral=True)
 
-    async def callback(self, interaction: discord.Interaction):
-        view = View(timeout=None)
-        view.add_item(TimeframeMenu(self.values[0]))
-        await interaction.response.send_message(f"✅ اختر الفريم الزمني لإشارة **{self.values[0]}**:", view=view, ephemeral=True)
+async def ask_timeframe(interaction: discord.Interaction, symbol):
+    options = [discord.SelectOption(label=frame) for frame in TIMEFRAMES]
 
-class MainMenu(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(SymbolMenu())
+    select = discord.ui.Select(placeholder=f"اختر الفريم الزمني لإشارة {symbol} ✅", options=options)
 
-@client.event
+    async def select_callback(select_interaction: discord.Interaction):
+        selected_frame = select.values[0]
+        await send_signal(select_interaction, symbol, selected_frame)
+
+    view = discord.ui.View()
+    select.callback = select_callback
+    view.add_item(select)
+    await interaction.response.send_message(f"✅ اختر الفريم الزمني لإشارة:\n**{symbol}**", view=view, ephemeral=True)
+
+async def send_signal(interaction: discord.Interaction, symbol, timeframe):
+    data = SIGNALS.get(symbol, {}).get(timeframe, [])
+    if not data:
+        await interaction.response.send_message("❌ لا توجد إشارة حالياً لهذه العملة والفريم.", ephemeral=True)
+        return
+
+    # احضار أول إشارة قادمة (نموذجية)
+    next_signal = data[0]
+    decision = next_signal["decision"]
+    time_str = next_signal["time"]
+
+    msg = f"""**إشارة Aurix 🧠**
+العملة: `{symbol}`
+🕰️ الوقت: `{time_str}`
+📈 القرار: `{decision}`
+📁 [نظام التكرار الزمني مفعل ✅]"""
+
+    await interaction.response.send_message(msg)
+
+@bot.event
 async def on_ready():
-    await client.tree.sync()
-    print(f"✅ Bot is ready as {client.user}")
+    print(f"✅ Bot is ready as {bot.user}")
+    try:
+        synced = await tree.sync()
+        print(f"✅ Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
 
-@client.tree.command(name="start", description="ابدأ تحليل Aurix")
-async def start(interaction: discord.Interaction):
-    await interaction.response.send_message("📌 اختر العملة:", view=MainMenu(), ephemeral=True)
-
-client.run(TOKEN)
+bot.run(TOKEN)
