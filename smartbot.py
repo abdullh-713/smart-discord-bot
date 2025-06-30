@@ -2,6 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from discord import app_commands
+from discord.ui import View, Select
 
 TOKEN = os.getenv("TOKEN")
 
@@ -16,50 +17,48 @@ OTC_SYMBOLS = [
 TIMEFRAMES = ["5s", "10s", "30s", "1min", "2min", "5min"]
 
 SIGNALS = {
-    symbol: {
-        tf: f"🧠 إشارة Aurix\n💱 العملة: {symbol}\n🕒 الوقت: 12:{str(i*5).zfill(2)}:00\n📈 القرار: {'صعود' if i % 2 == 0 else 'هبوط'}\n📂 [نظام التكرار الزمني مفعل ✅]"
-        for i, tf in enumerate(TIMEFRAMES)
+    "EURUSD_otc": {
+        "5s": "📊 إشـارة Aurix\n💱 العملة: EURUSD_otc\n🕒 الوقت: 12:00:00\n📈 القرار: صعود\n📂 نظام التكرار الزمني مفعل ✅",
+        "10s": "📊 إشـارة Aurix\n💱 العملة: EURUSD_otc\n🕒 الوقت: 12:05:00\n📉 القرار: هبوط\n📂 نظام التكرار الزمني مفعل ✅"
+    },
+    "CADCHF_otc": {
+        "5s": "📊 إشـارة Aurix\n💱 العملة: CADCHF_otc\n🕒 الوقت: 12:10:00\n📈 القرار: صعود\n📂 نظام التكرار الزمني مفعل ✅",
+        "10s": "📊 إشـارة Aurix\n💱 العملة: CADCHF_otc\n🕒 الوقت: 12:15:00\n📉 القرار: هبوط\n📂 نظام التكرار الزمني مفعل ✅"
     }
-    for symbol in OTC_SYMBOLS
 }
+
+class TimeframeMenu(Select):
+    def __init__(self, symbol):
+        self.symbol = symbol
+        options = [discord.SelectOption(label=tf, description=f"عرض إشارة {symbol} لفريم {tf}") for tf in TIMEFRAMES]
+        super().__init__(placeholder="🔽 اختر الفريم الزمني", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        signal = SIGNALS.get(self.symbol, {}).get(self.values[0], "❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
+        await interaction.response.send_message(signal, ephemeral=True)
+
+class SymbolMenu(Select):
+    def __init__(self):
+        options = [discord.SelectOption(label=symbol, description=f"اختر {symbol}") for symbol in OTC_SYMBOLS]
+        super().__init__(placeholder="🔽 اختر العملة", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = View(timeout=None)
+        view.add_item(TimeframeMenu(self.values[0]))
+        await interaction.response.send_message(f"✅ اختر الفريم الزمني لإشارة **{self.values[0]}**:", view=view, ephemeral=True)
+
+class MainMenu(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(SymbolMenu())
 
 @client.event
 async def on_ready():
+    await client.tree.sync()
     print(f"✅ Bot is ready as {client.user}")
-    try:
-        synced = await client.tree.sync()
-        print(f"✅ Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"❌ Error syncing commands: {e}")
 
-@client.tree.command(name="start", description="ابدأ إشارات Aurix")
+@client.tree.command(name="start", description="ابدأ تحليل Aurix")
 async def start(interaction: discord.Interaction):
-    symbol_options = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
-    symbol_menu = discord.ui.Select(placeholder="🔽 اختر العملة", options=symbol_options)
-
-    async def symbol_callback(interaction2: discord.Interaction):
-        selected_symbol = symbol_menu.values[0]
-        await ask_timeframe(interaction2, selected_symbol)
-
-    symbol_menu.callback = symbol_callback
-
-    view = discord.ui.View()
-    view.add_item(symbol_menu)
-    await interaction.response.send_message("🔰 اختر العملة:", view=view, ephemeral=True)
-
-async def ask_timeframe(interaction, symbol):
-    timeframe_options = [discord.SelectOption(label=tf) for tf in TIMEFRAMES]
-    timeframe_menu = discord.ui.Select(placeholder="🔽 اختر الفريم الزمني", options=timeframe_options)
-
-    async def timeframe_callback(interaction2: discord.Interaction):
-        selected_tf = timeframe_menu.values[0]
-        msg = SIGNALS.get(symbol, {}).get(selected_tf, "❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
-        await interaction2.response.send_message(msg)
-
-    timeframe_menu.callback = timeframe_callback
-
-    view = discord.ui.View()
-    view.add_item(timeframe_menu)
-    await interaction.followup.send(f"✅ اختر الفريم لإشارة **{symbol}**:", view=view, ephemeral=True)
+    await interaction.response.send_message("📌 اختر العملة:", view=MainMenu(), ephemeral=True)
 
 client.run(TOKEN)
