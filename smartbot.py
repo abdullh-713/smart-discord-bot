@@ -1,84 +1,74 @@
-import discord
-from discord.ext import commands
-from discord.ui import Button, View
 import os
-from PIL import Image
-import io
-import torch
-from torchvision import transforms
+import asyncio
+import discord
+from discord.ext import commands, tasks
 
-# استخدم التوكن من متغير بيئي
 TOKEN = os.getenv("TOKEN")
 
-# إعدادات التصاريح
 intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# دالة تحليل وهمية (عدّل لاحقًا لتحليل فعلي)
-def analyze_image(tensor):
-    return "📈 صعود"  # يمكن تعديلها إلى "📉 هبوط" أو "⏸️ انتظار"
+# العملات والفريمات
+symbols = ["EURUSD", "GBPUSD", "USDJPY"]
+timeframes = ["1m", "2m", "5m"]
 
-# القائمة الداخلية - مثل Aurix
-class AurixMenu(View):
-    def __init__(self):
-        super().__init__(timeout=None)
+# إشارات وهمية محفوظة مسبقًا لكل عملة وفريم (تُكرر تلقائيًا)
+signals = {
+    "EURUSD_1m": ["صعود", "هبوط", "صعود", "صعود", "هبوط"],
+    "EURUSD_2m": ["هبوط", "صعود", "هبوط", "صعود", "هبوط"],
+    "EURUSD_5m": ["صعود", "صعود", "هبوط", "هبوط", "صعود"],
+    "GBPUSD_1m": ["هبوط", "هبوط", "صعود", "صعود", "هبوط"],
+    "GBPUSD_2m": ["صعود", "هبوط", "صعود", "هبوط", "صعود"],
+    "GBPUSD_5m": ["هبوط", "صعود", "صعود", "هبوط", "هبوط"],
+    "USDJPY_1m": ["صعود", "صعود", "هبوط", "هبوط", "صعود"],
+    "USDJPY_2m": ["هبوط", "صعود", "هبوط", "صعود", "هبوط"],
+    "USDJPY_5m": ["صعود", "هبوط", "صعود", "صعود", "هبوط"]
+}
 
-    @discord.ui.button(label="🔍 تحليل مباشر", style=discord.ButtonStyle.success, custom_id="analyze_now")
-    async def analyze_now(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("📷 أرسل صورة الشارت الآن وسأحللها فورًا", ephemeral=True)
+# متغيرات لتتبع الاختيارات
+user_symbol = {}
+user_timeframe = {}
+user_index = {}
 
-    @discord.ui.button(label="🛑 إلغاء", style=discord.ButtonStyle.danger, custom_id="cancel")
-    async def cancel(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_message("✅ تم إلغاء العملية", ephemeral=True)
-
-# تشغيل البوت
 @bot.event
 async def on_ready():
-    print(f"✅ Aurix-style bot active as: {bot.user}")
+    print(f"✅ Bot is ready. Logged in as {bot.user.name}")
 
-# عند إرسال أي رسالة
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
+@bot.command()
+async def ابدأ(ctx):
+    keyboard = [[discord.ui.Button(label=s, style=discord.ButtonStyle.primary)] for s in symbols]
+    view = discord.ui.View()
+    for row in keyboard:
+        for btn in row:
+            view.add_item(btn)
+            btn.callback = lambda i, s=btn.label: asyncio.create_task(select_symbol(ctx, i, s))
+    await ctx.send("🪙 اختر العملة:", view=view)
 
-    if message.content.lower() in ["ابدأ", "start", "/start"]:
-        await message.channel.send("🧠 **مرحبًا بك في بوت Aurix**\nاختر من الخيارات التالية:", view=AurixMenu())
+async def select_symbol(ctx, interaction, symbol):
+    user_symbol[ctx.author.id] = symbol
+    keyboard = [[discord.ui.Button(label=t, style=discord.ButtonStyle.secondary)] for t in timeframes]
+    view = discord.ui.View()
+    for row in keyboard:
+        for btn in row:
+            view.add_item(btn)
+            btn.callback = lambda i, t=btn.label: asyncio.create_task(start_signals(ctx, i, t))
+    await interaction.response.edit_message(content=f"✅ تم اختيار العملة: `{symbol}`\n⏱ الآن اختر الفريم:", view=view)
 
-    await bot.process_commands(message)
+async def start_signals(ctx, interaction, timeframe):
+    uid = ctx.author.id
+    symbol = user_symbol.get(uid)
+    tf_key = f"{symbol}_{timeframe}"
+    user_timeframe[uid] = tf_key
+    user_index[uid] = 0
+    await interaction.response.edit_message(content=f"✅ بدأ إرسال الإشارات لـ `{tf_key}` كل 15 ثانية.", view=None)
+    send_signal.start(ctx)
 
-# عند إرسال صورة للتحليل
-@bot.event
-async def on_message_edit(before, after):
-    await bot.process_commands(after)
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    # إذا أرسل صورة
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.endswith((".png", ".jpg", ".jpeg")):
-                img_data = await attachment.read()
-                image = Image.open(io.BytesIO(img_data)).convert("RGB")
-
-                transform = transforms.Compose([
-                    transforms.Resize((224, 224)),
-                    transforms.ToTensor()
-                ])
-
-                img_tensor = transform(image).unsqueeze(0)
-                decision = analyze_image(img_tensor)
-
-                await message.channel.send(
-                    f"📊 **التحليل التلقائي للصورة**\n"
-                    f"📂 القرار النهائي: **{decision}**"
-                )
-    await bot.process_commands(message)
-
-bot.run(TOKEN)
+@tasks.loop(seconds=15)
+async def send_signal(ctx):
+    uid = ctx.author.id
+    tf_key = user_timeframe.get(uid)
+    index = user_index.get(uid, 0)
+    if tf_key in signals:
+        signal = signals[tf_key][index % len(signals[tf_key])]
+        await ctx.send(f"📊 إشـارة ({tf_key}) 👉 `{signal}`")
+        user_index[uid] = index + 1
