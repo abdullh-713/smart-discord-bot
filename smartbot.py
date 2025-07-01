@@ -1,79 +1,62 @@
 import discord
-from discord.ext import commands
-from PIL import Image
-import torch
-import torchvision.transforms as transforms
-from torchvision import models
-import json
-import datetime
 import os
+import cv2
+import numpy as np
+from discord.ext import commands
+from dotenv import load_dotenv
 
-# تحميل جدول الإشارات
-with open("full_signal_table.json", "r", encoding="utf-8") as f:
-    SIGNAL_TABLE = json.load(f)
+load_dotenv()
+TOKEN = os.getenv("TOKEN")  # استخدم متغير البيئة TOKEN من Railway
 
-# إعدادات البوت
-TOKEN = os.getenv("TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحميل نموذج الذكاء الصناعي
-model = models.resnet50(pretrained=True)
-model.fc = torch.nn.Linear(model.fc.in_features, 3)
-model.eval()
+# دالة التحليل الذكي — للشمعة القادمة فقط
+def analyze_image_for_next_candle(image_path):
+    img = cv2.imread(image_path)
+    if img is None:
+        return "❌ الصورة غير واضحة"
 
-# الفئات: 0 = هبوط، 1 = صعود، 2 = انتظار
-LABELS = ["هبوط", "صعود", "انتظار"]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-# تحويل الصور للإدخال في النموذج
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor()
-])
+    # ألوان الشموع
+    green_lower = np.array([35, 50, 50])
+    green_upper = np.array([85, 255, 255])
+    red_lower1 = np.array([0, 70, 50])
+    red_upper1 = np.array([10, 255, 255])
+    red_lower2 = np.array([170, 70, 50])
+    red_upper2 = np.array([180, 255, 255])
 
-@bot.event
-async def on_ready():
-    print(f"✅ تسجيل الدخول كن {bot.user}")
+    green_mask = cv2.inRange(hsv, green_lower, green_upper)
+    red_mask = cv2.inRange(hsv, red_lower1, red_upper1) | cv2.inRange(hsv, red_lower2, red_upper2)
 
-@bot.command()
-async def اشارة(ctx, العملة: str, الفريم: str):
-    """يستخرج الإشارة من الجدول"""
-    try:
-        now = datetime.datetime.utcnow()
-        current_time = now.strftime("%H:%M")
+    green_pixels = cv2.countNonZero(green_mask)
+    red_pixels = cv2.countNonZero(red_mask)
 
-        if العملة in SIGNAL_TABLE and الفريم in SIGNAL_TABLE[العملة]:
-            for entry in SIGNAL_TABLE[العملة][الفريم]:
-                if entry["time"] == current_time:
-                    await ctx.send(f"📊 العملة: {العملة}\n⏰ الوقت: {current_time}\n📈 القرار: {entry['decision']}")
-                    return
-        await ctx.send("❌ لا توجد إشارة حالياً لهذه العملة والفريم.")
-    except Exception as e:
-        await ctx.send(f"⚠️ خطأ: {e}")
+    # القرار موجه للشمعة القادمة فقط
+    if green_pixels > red_pixels * 1.4:
+        return "📈 التحليل: 🔼 صعود (للشمعة القادمة)"
+    elif red_pixels > green_pixels * 1.4:
+        return "📉 التحليل: 🔽 هبوط (للشمعة القادمة)"
+    else:
+        return "⏸ التحليل: انتظار (لا قرار حاسم للشمعة القادمة)"
 
+# عند استقبال صورة
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
-        return
-
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith(("jpg", "jpeg", "png")):
-                await message.channel.send("📥 جاري تحليل الصورة...")
-                img_path = f"/tmp/{attachment.filename}"
-                await attachment.save(img_path)
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                file_path = f"received_{attachment.filename}"
+                await attachment.save(file_path)
 
-                image = Image.open(img_path).convert("RGB")
-                image_tensor = transform(image).unsqueeze(0)
+                result = analyze_image_for_next_candle(file_path)
+                await message.channel.send(result)
 
-                with torch.no_grad():
-                    prediction = model(image_tensor)
-                    label_index = torch.argmax(prediction, dim=1).item()
-                    result = LABELS[label_index]
+                os.remove(file_path)
 
-                await message.channel.send(f"✅ النتيجة: **{result}**")
-                os.remove(img_path)
     await bot.process_commands(message)
 
+# تشغيل البوت
 bot.run(TOKEN)
