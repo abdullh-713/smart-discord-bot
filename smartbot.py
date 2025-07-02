@@ -1,83 +1,112 @@
 import discord
-import os
+from discord.ext import commands
+from PIL import Image
+import io
 import cv2
 import numpy as np
-from discord.ext import commands
-from dotenv import load_dotenv
+import os
 
-# تحميل التوكن من البيئة
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-
-# إعداد صلاحيات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحليل الشمعة القادمة باستخدام مؤشرات RSI + Bollinger + Stochastic + MA
-def analyze_image_advanced(image_path):
-    try:
-        img = cv2.imread(image_path)
-        if img is None:
-            return "⏸ الصورة غير واضحة"
+def analyze_image(image_bytes):
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    open_cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    height, width, _ = open_cv_image.shape
 
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    decision = "انتظار"
 
-        # --- مؤشرات الألوان ---
-        # صعود (أخضر)
-        green_mask = cv2.inRange(hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
-        green_score = cv2.countNonZero(green_mask)
+    # مناطق التحليل من الصورة
+    chart_area = open_cv_image[int(height*0.10):int(height*0.70), int(width*0.05):int(width*0.95)]
+    rsi_area   = open_cv_image[int(height*0.82):int(height*0.89), int(width*0.05):int(width*0.95)]
+    stoch_area = open_cv_image[int(height*0.90):int(height*0.97), int(width*0.05):int(width*0.95)]
 
-        # هبوط (أحمر)
-        red_mask = cv2.inRange(hsv, np.array([0, 50, 50]), np.array([10, 255, 255])) | \
-                   cv2.inRange(hsv, np.array([170, 50, 50]), np.array([180, 255, 255]))
-        red_score = cv2.countNonZero(red_mask)
+    # تحليل RSI
+    rsi_gray = cv2.cvtColor(rsi_area, cv2.COLOR_BGR2GRAY)
+    rsi_avg = np.mean(rsi_gray)
+    rsi_signal = "neutral"
+    if rsi_avg > 170:
+        rsi_signal = "overbought"
+    elif rsi_avg < 85:
+        rsi_signal = "oversold"
 
-        # مؤشر RSI (منطقة أسفل الشارت عادةً بنفسجي)
-        rsi_zone = img[-100:-50, 40:300]
-        rsi_mean = np.mean(rsi_zone[:, :, 0])  # متوسط الأزرق لتقدير التشبع
+    # تحليل Stochastic
+    stoch_gray = cv2.cvtColor(stoch_area, cv2.COLOR_BGR2GRAY)
+    stoch_avg = np.mean(stoch_gray)
+    stoch_signal = "neutral"
+    if stoch_avg > 160:
+        stoch_signal = "overbought"
+    elif stoch_avg < 90:
+        stoch_signal = "oversold"
 
-        # Bollinger Bands (تفوق أو هبوط مفاجئ)
-        bb_zone = img[140:240, 100:600]
-        bb_brightness = np.mean(bb_zone)
+    # تحليل آخر شمعة
+    candle_col = chart_area[:, -20:]
+    candle_color = np.mean(candle_col, axis=(0, 1))
+    last_candle = "neutral"
+    if candle_color[2] > candle_color[1] + 30:
+        last_candle = "bearish"
+    elif candle_color[1] > candle_color[2] + 30:
+        last_candle = "bullish"
 
-        # Moving Average تقريبًا في منتصف الشارت (خط أصفر أو أبيض)
-        ma_zone = img[100:140, 150:400]
-        ma_brightness = np.mean(ma_zone)
+    # Bollinger Bands (مقاومة ودعم)
+    top_band_pixel = chart_area[5, -10]
+    bottom_band_pixel = chart_area[-5, -10]
+    current_pixel = chart_area[chart_area.shape[0]//2, -10]
 
-        # Stochastic (عادة رمادي/أزرق أسفل RSI)
-        sto_zone = img[-50:, 40:300]
-        sto_std = np.std(sto_zone[:, :, 2])  # تذبذب الأحمر
+    touch_top = np.linalg.norm(current_pixel - top_band_pixel) < 40
+    touch_bottom = np.linalg.norm(current_pixel - bottom_band_pixel) < 40
 
-        # --- منطق القرار النهائي ---
-        if red_score > green_score * 1.2 and rsi_mean > 130 and bb_brightness < 90 and sto_std > 20:
-            return "🔽 هبوط"
-        elif green_score > red_score * 1.2 and rsi_mean < 100 and bb_brightness > 120 and sto_std > 20:
-            return "🔼 صعود"
-        else:
-            return "⏸ انتظار"
-    except Exception as e:
-        return f"⚠️ خطأ في التحليل: {str(e)}"
+    bb_signal = "neutral"
+    if touch_top and last_candle == "bearish":
+        bb_signal = "resistance_reject"
+    elif touch_bottom and last_candle == "bullish":
+        bb_signal = "support_bounce"
 
-# عند تشغيل البوت
+    # Moving Average
+    ma_row = chart_area[chart_area.shape[0]//2, -20:]
+    ma_color = np.mean(ma_row, axis=0)
+    if ma_color[0] > 200 and ma_color[1] > 200:
+        ma_signal = "above"
+    elif ma_color[0] < 100 and ma_color[1] < 100:
+        ma_signal = "below"
+    else:
+        ma_signal = "neutral"
+
+    # الاستراتيجية الذكية النهائية
+    if rsi_signal == "oversold" and stoch_signal == "oversold" and bb_signal == "support_bounce" and ma_signal == "above":
+        decision = "صعود"
+    elif rsi_signal == "overbought" and stoch_signal == "overbought" and bb_signal == "resistance_reject" and ma_signal == "below":
+        decision = "هبوط"
+    elif rsi_signal == "oversold" and last_candle == "bullish" and ma_signal == "above":
+        decision = "صعود"
+    elif rsi_signal == "overbought" and last_candle == "bearish" and ma_signal == "below":
+        decision = "هبوط"
+    elif bb_signal == "support_bounce" and ma_signal == "above":
+        decision = "صعود"
+    elif bb_signal == "resistance_reject" and ma_signal == "below":
+        decision = "هبوط"
+    else:
+        decision = "انتظار"
+
+    return decision
+
 @bot.event
 async def on_ready():
-    print(f"✅ البوت يعمل الآن باسم: {bot.user}")
+    print(f"✅ Bot is online as {bot.user}")
 
-# استقبال الصور وتحليلها فوراً
 @bot.event
 async def on_message(message):
+    if message.author == bot.user:
+        return
+
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
-                temp_path = f"temp_{attachment.filename}"
-                await attachment.save(temp_path)
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg']):
+                img_bytes = await attachment.read()
+                result = analyze_image(img_bytes)
+                await message.channel.send(result)
 
-                decision = analyze_image_advanced(temp_path)
-                await message.channel.send(decision)
-
-                os.remove(temp_path)
-    await bot.process_commands(message)
-
-# تشغيل البوت
+# ✅ استخدام التوكن من متغير بيئة (مناسب لـ Railway)
+TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
