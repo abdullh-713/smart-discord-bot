@@ -1,62 +1,76 @@
+import discord
 import os
 import cv2
 import numpy as np
-import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل التوكن من متغير البيئة
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# إعداد البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحليل ذكي متكامل للشمعة القادمة
-def analyze_candle_image(image_path):
+def analyze_image(image_path):
     img = cv2.imread(image_path)
     if img is None:
-        return "❌ تعذر قراءة الصورة"
+        return "❌ صورة غير صالحة"
 
-    img = cv2.resize(img, (800, 400))  # تحسين الدقة
+    # تحويل للصيغ المطلوبة
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-    # مؤشرات Bollinger Bands + Moving Average (تحليل بصري مبسط)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 50, 150)
 
-    bb_strength = np.sum(edges[300:350, 300:500])  # منطقة بولينجر
-    ma_line = np.sum(edges[150:180, 300:500])      # منطقة الموفينج أفريج
+    # نطاقات الألوان (شموع خضراء وحمراء)
+    green_mask = cv2.inRange(hsv, (35, 40, 40), (85, 255, 255))
+    red_mask = cv2.inRange(hsv, (0, 60, 50), (10, 255, 255)) | cv2.inRange(hsv, (170, 60, 50), (180, 255, 255))
 
-    # ألوان الشموع
-    green_mask = cv2.inRange(hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
-    red_mask1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([10, 255, 255]))
-    red_mask2 = cv2.inRange(hsv, np.array([170, 60, 60]), np.array([180, 255, 255]))
-    red_mask = red_mask1 | red_mask2
+    # مؤشرات RSI, MA, Bollinger Bands (مبسط بالرؤية اللونية)
+    rsi_area = gray[450:470, 50:250]
+    rsi_val = np.mean(rsi_area)
 
-    green_area = cv2.countNonZero(green_mask)
-    red_area = cv2.countNonZero(red_mask)
+    bb_area = gray[100:120, 50:250]
+    bb_std = np.std(bb_area)
 
-    # مؤشر RSI و Stochastic (مناطق معينة من الصورة)
-    rsi_zone = gray[50:100, 600:750]
-    stoch_zone = gray[110:160, 600:750]
-    rsi_value = np.mean(rsi_zone)
-    stoch_value = np.mean(stoch_zone)
+    stochastic_area = gray[300:320, 50:250]
+    stochastic_val = np.mean(stochastic_area)
 
-    # قرار ذكي باستخدام استراتيجية مدمجة
-    if green_area > red_area and rsi_value > 130 and stoch_value > 130 and ma_line > 5000:
+    green_strength = cv2.countNonZero(green_mask)
+    red_strength = cv2.countNonZero(red_mask)
+    white_area = cv2.countNonZero(cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)[1])
+
+    # استراتيجية الذكاء الصناعي البصري
+    score_up = 0
+    score_down = 0
+
+    if green_strength > red_strength and white_area > 10000:
+        score_up += 1
+    if red_strength > green_strength and white_area > 10000:
+        score_down += 1
+
+    if rsi_val < 90:
+        score_down += 1
+    if rsi_val > 140:
+        score_up += 1
+
+    if bb_std > 20:
+        score_up += 1
+    if bb_std < 10:
+        score_down += 1
+
+    if stochastic_val > 130:
+        score_down += 1
+    if stochastic_val < 100:
+        score_up += 1
+
+    # قرار نهائي ذكي
+    if score_up >= 3:
         return "🔼 صعود"
-    elif red_area > green_area and rsi_value < 100 and stoch_value < 100 and ma_line > 5000:
+    elif score_down >= 3:
         return "🔽 هبوط"
-    elif abs(green_area - red_area) < 800 or ma_line < 3000 or bb_strength < 3000:
-        return "⏸ انتظار"
     else:
         return "⏸ انتظار"
 
-# استقبال الصور وتحليلها تلقائيًا
 @bot.event
 async def on_message(message):
     if message.attachments:
@@ -64,10 +78,11 @@ async def on_message(message):
             if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
                 path = f"temp_{attachment.filename}"
                 await attachment.save(path)
-                result = analyze_candle_image(path)
+
+                result = analyze_image(path)
                 await message.channel.send(result)
                 os.remove(path)
+
     await bot.process_commands(message)
 
-# تشغيل البوت
 bot.run(TOKEN)
