@@ -1,7 +1,7 @@
-import discord
 import os
 import cv2
 import numpy as np
+import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -14,67 +14,60 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def analyze_image_advanced(image_path):
+# تحليل ذكي متكامل للشمعة القادمة
+def analyze_candle_image(image_path):
     img = cv2.imread(image_path)
     if img is None:
-        return "❌ الصورة غير واضحة"
+        return "❌ تعذر قراءة الصورة"
 
-    height, width, _ = img.shape
+    img = cv2.resize(img, (800, 400))  # تحسين الدقة
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    # مقاطع المؤشرات في الصورة (حسب مواقعها المعروفة في الشارت)
-    rsi_zone = img[int(height*0.85):int(height*0.95), int(width*0.05):int(width*0.95)]
-    stoch_zone = img[int(height*0.75):int(height*0.83), int(width*0.05):int(width*0.95)]
-    bb_zone = img[int(height*0.15):int(height*0.45), int(width*0.05):int(width*0.95)]
-    ma_zone = img[int(height*0.15):int(height*0.45), int(width*0.05):int(width*0.95)]
-    candles_zone = img[int(height*0.15):int(height*0.45), int(width*0.05):int(width*0.95)]
+    # مؤشرات Bollinger Bands + Moving Average (تحليل بصري مبسط)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
 
-    # تحليل RSI
-    rsi_gray = cv2.cvtColor(rsi_zone, cv2.COLOR_BGR2GRAY)
-    _, rsi_thresh = cv2.threshold(rsi_gray, 200, 255, cv2.THRESH_BINARY)
-    rsi_white_pixels = cv2.countNonZero(rsi_thresh)
+    bb_strength = np.sum(edges[300:350, 300:500])  # منطقة بولينجر
+    ma_line = np.sum(edges[150:180, 300:500])      # منطقة الموفينج أفريج
 
-    # تحليل Stochastic
-    stoch_gray = cv2.cvtColor(stoch_zone, cv2.COLOR_BGR2GRAY)
-    _, stoch_thresh = cv2.threshold(stoch_gray, 200, 255, cv2.THRESH_BINARY)
-    stoch_white_pixels = cv2.countNonZero(stoch_thresh)
+    # ألوان الشموع
+    green_mask = cv2.inRange(hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
+    red_mask1 = cv2.inRange(hsv, np.array([0, 60, 60]), np.array([10, 255, 255]))
+    red_mask2 = cv2.inRange(hsv, np.array([170, 60, 60]), np.array([180, 255, 255]))
+    red_mask = red_mask1 | red_mask2
 
-    # تحليل Bollinger Bands
-    bb_gray = cv2.cvtColor(bb_zone, cv2.COLOR_BGR2GRAY)
-    _, bb_thresh = cv2.threshold(bb_gray, 200, 255, cv2.THRESH_BINARY)
-    bb_white_pixels = cv2.countNonZero(bb_thresh)
+    green_area = cv2.countNonZero(green_mask)
+    red_area = cv2.countNonZero(red_mask)
 
-    # تحليل الشموع
-    hsv = cv2.cvtColor(candles_zone, cv2.COLOR_BGR2HSV)
-    green_mask = cv2.inRange(hsv, (35, 60, 60), (85, 255, 255))
-    red_mask1 = cv2.inRange(hsv, (0, 60, 60), (10, 255, 255))
-    red_mask2 = cv2.inRange(hsv, (170, 60, 60), (180, 255, 255))
-    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-    green_count = cv2.countNonZero(green_mask)
-    red_count = cv2.countNonZero(red_mask)
+    # مؤشر RSI و Stochastic (مناطق معينة من الصورة)
+    rsi_zone = gray[50:100, 600:750]
+    stoch_zone = gray[110:160, 600:750]
+    rsi_value = np.mean(rsi_zone)
+    stoch_value = np.mean(stoch_zone)
 
-    # الشروط الذكية (بدون تحيز)
-    if rsi_white_pixels > 4000 and stoch_white_pixels > 3500 and green_count > red_count * 1.2:
+    # قرار ذكي باستخدام استراتيجية مدمجة
+    if green_area > red_area and rsi_value > 130 and stoch_value > 130 and ma_line > 5000:
         return "🔼 صعود"
-    elif rsi_white_pixels > 4000 and stoch_white_pixels > 3500 and red_count > green_count * 1.2:
+    elif red_area > green_area and rsi_value < 100 and stoch_value < 100 and ma_line > 5000:
         return "🔽 هبوط"
-    elif bb_white_pixels < 4000 and abs(red_count - green_count) < 500:
+    elif abs(green_area - red_area) < 800 or ma_line < 3000 or bb_strength < 3000:
         return "⏸ انتظار"
     else:
         return "⏸ انتظار"
 
+# استقبال الصور وتحليلها تلقائيًا
 @bot.event
 async def on_message(message):
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                file_path = f"temp_{attachment.filename}"
-                await attachment.save(file_path)
-
-                result = analyze_image_advanced(file_path)
+            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                path = f"temp_{attachment.filename}"
+                await attachment.save(path)
+                result = analyze_candle_image(path)
                 await message.channel.send(result)
-
-                os.remove(file_path)
-
+                os.remove(path)
     await bot.process_commands(message)
 
+# تشغيل البوت
 bot.run(TOKEN)
