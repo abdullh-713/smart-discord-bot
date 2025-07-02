@@ -1,4 +1,4 @@
-‏import discord
+import discord
 import os
 import cv2
 import numpy as np
@@ -14,7 +14,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# تحليل الشمعة القادمة باستخدام مؤشرات من الصورة
+# تحليل متقدم (شمعة قادمة فقط) بناءً على مؤشرات مرئية
 def advanced_candle_decision(image_path):
     img = cv2.imread(image_path)
     if img is None:
@@ -25,6 +25,7 @@ def advanced_candle_decision(image_path):
     green_mask = cv2.inRange(hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
     red_mask = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255])) | \
                cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
+
     green_pixels = cv2.countNonZero(green_mask)
     red_pixels = cv2.countNonZero(red_mask)
 
