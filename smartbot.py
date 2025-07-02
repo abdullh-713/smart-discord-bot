@@ -5,81 +5,78 @@ import numpy as np
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل التوكن من .env
+# تحميل التوكن من البيئة
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
+# إعداد صلاحيات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# دالة تحليل الصورة واتخاذ القرار للشمعة القادمة
-def analyze_candle(image_path):
-    img = cv2.imread(image_path)
-    if img is None:
-        return "⏸"
+# تحليل الشمعة القادمة باستخدام مؤشرات RSI + Bollinger + Stochastic + MA
+def analyze_image_advanced(image_path):
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return "⏸ الصورة غير واضحة"
 
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    # تحليل الشموع بالألوان
-    green_mask = cv2.inRange(hsv, np.array([35, 60, 60]), np.array([85, 255, 255]))
-    red_mask = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255])) | \
-               cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
+        # --- مؤشرات الألوان ---
+        # صعود (أخضر)
+        green_mask = cv2.inRange(hsv, np.array([35, 50, 50]), np.array([85, 255, 255]))
+        green_score = cv2.countNonZero(green_mask)
 
-    green_pixels = cv2.countNonZero(green_mask)
-    red_pixels = cv2.countNonZero(red_mask)
+        # هبوط (أحمر)
+        red_mask = cv2.inRange(hsv, np.array([0, 50, 50]), np.array([10, 255, 255])) | \
+                   cv2.inRange(hsv, np.array([170, 50, 50]), np.array([180, 255, 255]))
+        red_score = cv2.countNonZero(red_mask)
 
-    # RSI (اللون البنفسجي غالبًا في الأسفل)
-    rsi_area = img[-120:-60, 50:300]
-    rsi_mean = np.mean(rsi_area[:, :, 0])  # قناة اللون الأزرق للتقدير التقريبي
+        # مؤشر RSI (منطقة أسفل الشارت عادةً بنفسجي)
+        rsi_zone = img[-100:-50, 40:300]
+        rsi_mean = np.mean(rsi_zone[:, :, 0])  # متوسط الأزرق لتقدير التشبع
 
-    # Stochastic (خطوط بيضاء وبرتقالية/صفراء)
-    stoch_area = img[-100:-30, 400:700]
-    stoch_brightness = np.mean(stoch_area)
+        # Bollinger Bands (تفوق أو هبوط مفاجئ)
+        bb_zone = img[140:240, 100:600]
+        bb_brightness = np.mean(bb_zone)
 
-    # Bollinger Bands (تحديد مكان السعر)
-    bb_area = img[150:300, 100:600]
-    bb_brightness = np.mean(bb_area)
+        # Moving Average تقريبًا في منتصف الشارت (خط أصفر أو أبيض)
+        ma_zone = img[100:140, 150:400]
+        ma_brightness = np.mean(ma_zone)
 
-    # منطق القرار النهائي
-    if (
-        green_pixels > red_pixels * 1.2
-        and rsi_mean < 95
-        and stoch_brightness < 105
-        and bb_brightness < 105
-    ):
-        return "🔼"  # صعود
+        # Stochastic (عادة رمادي/أزرق أسفل RSI)
+        sto_zone = img[-50:, 40:300]
+        sto_std = np.std(sto_zone[:, :, 2])  # تذبذب الأحمر
 
-    elif (
-        red_pixels > green_pixels * 1.2
-        and rsi_mean > 130
-        and stoch_brightness > 130
-        and bb_brightness > 130
-    ):
-        return "🔽"  # هبوط
+        # --- منطق القرار النهائي ---
+        if red_score > green_score * 1.2 and rsi_mean > 130 and bb_brightness < 90 and sto_std > 20:
+            return "🔽 هبوط"
+        elif green_score > red_score * 1.2 and rsi_mean < 100 and bb_brightness > 120 and sto_std > 20:
+            return "🔼 صعود"
+        else:
+            return "⏸ انتظار"
+    except Exception as e:
+        return f"⚠️ خطأ في التحليل: {str(e)}"
 
-    else:
-        return "⏸"  # انتظار
-
-# جاهزية البوت
+# عند تشغيل البوت
 @bot.event
 async def on_ready():
-    print(f"✅ البوت يعمل الآن: {bot.user}")
+    print(f"✅ البوت يعمل الآن باسم: {bot.user}")
 
-# استقبال وتحليل الصور
+# استقبال الصور وتحليلها فوراً
 @bot.event
 async def on_message(message):
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                path = f"temp_{attachment.filename}"
-                await attachment.save(path)
+            if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                temp_path = f"temp_{attachment.filename}"
+                await attachment.save(temp_path)
 
-                result = analyze_candle(path)
-                await message.channel.send(result)
+                decision = analyze_image_advanced(temp_path)
+                await message.channel.send(decision)
 
-                os.remove(path)
-
+                os.remove(temp_path)
     await bot.process_commands(message)
 
 # تشغيل البوت
