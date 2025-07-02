@@ -40,19 +40,18 @@ def analyze_image(image_bytes):
     stoch_gradient = np.gradient(stoch_line)
     stoch_trend = np.mean(stoch_gradient)
 
-    # قرار "انتظار" فقط إذا كان السوق ميت فعليًا
-    if abs(rsi_trend) < 0.05 and abs(stoch_trend) < 0.05:
-        return "انتظار"
+    # ⚖️ منطق متوازن لاتخاذ القرار
+    strong_up = rsi_trend > 0.15 and stoch_trend > 0.15
+    strong_down = rsi_trend < -0.15 and stoch_trend < -0.15
 
-    # القرار النهائي الذكي (صعود أو هبوط دائمًا تقريبًا)
-    if candle_type == "bullish" and (rsi_trend > 0 or stoch_trend > 0):
+    if strong_up and candle_type == "bullish":
         return "صعود"
-    elif candle_type == "bearish" and (rsi_trend < 0 or stoch_trend < 0):
+    elif strong_down and candle_type == "bearish":
         return "هبوط"
-    elif rsi_trend > stoch_trend:
-        return "صعود"
+    elif abs(rsi_trend) < 0.05 and abs(stoch_trend) < 0.05:
+        return "انتظار"
     else:
-        return "هبوط"
+        return "انتظار"
 
 @bot.event
 async def on_ready():
@@ -70,6 +69,6 @@ async def on_message(message):
                 result = analyze_image(img_bytes)
                 await message.channel.send(result)
 
-# استخدام التوكن من متغير البيئة لتشغيل البوت
+# 🔑 التوكن من متغير البيئة (مناسب لـ Railway)
 TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
