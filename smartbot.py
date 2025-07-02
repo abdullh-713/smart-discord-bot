@@ -1,74 +1,72 @@
+import os
 import discord
 from discord.ext import commands
-from PIL import Image
-import io
-import cv2
-import numpy as np
-import os
+from datetime import datetime
 
+# إعدادات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def analyze_image(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    open_cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    height, width, _ = open_cv_image.shape
+# قائمة عملات OTC
+OTC_SYMBOLS = [
+    "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
+    "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc"
+]
 
-    chart_area = open_cv_image[int(height*0.12):int(height*0.70), int(width*0.05):int(width*0.95)]
-    rsi_area = open_cv_image[int(height*0.82):int(height*0.89), int(width*0.05):int(width*0.95)]
-    stoch_area = open_cv_image[int(height*0.90):int(height*0.97), int(width*0.05):int(width*0.95)]
+# قائمة الفريمات الزمنية
+TIMEFRAMES = ["5s", "15s", "30s", "1min", "2min", "5min"]
 
-    # تحليل الشمعة الأخيرة
-    last_candle = chart_area[:, -20:]
-    avg_color = np.mean(last_candle, axis=(0, 1))
-    candle_type = "neutral"
-    if avg_color[1] > avg_color[2] + 25:
-        candle_type = "bullish"
-    elif avg_color[2] > avg_color[1] + 25:
-        candle_type = "bearish"
+# قاعدة ثغرات مبرمجة يدويًا (مبدئيًا)
+def get_through_strategy(symbol, timeframe, now):
+    seconds = now.second
+    minutes = now.minute
 
-    # تحليل RSI
-    rsi_gray = cv2.cvtColor(rsi_area, cv2.COLOR_BGR2GRAY)
-    rsi_line = np.mean(rsi_gray, axis=1)
-    rsi_gradient = np.gradient(rsi_line)
-    rsi_trend = np.mean(rsi_gradient)
+    # ثغرة التوقيت الثابت: صعود كل 00 أو 30 ثانية
+    if seconds in [0, 30]:
+        return "صعود", "1 دقيقة", "ثغرة التوقيت الثابت"
 
-    # تحليل Stochastic
-    stoch_gray = cv2.cvtColor(stoch_area, cv2.COLOR_BGR2GRAY)
-    stoch_line = np.mean(stoch_gray, axis=1)
-    stoch_gradient = np.gradient(stoch_line)
-    stoch_trend = np.mean(stoch_gradient)
+    # ثغرة التكرار الزمني: هبوط كل 5 دقائق
+    if minutes % 5 == 0 and seconds < 10:
+        return "هبوط", "2 دقيقة", "ثغرة التكرار الزمني"
 
-    # ⚖️ منطق متوازن لاتخاذ القرار
-    strong_up = rsi_trend > 0.15 and stoch_trend > 0.15
-    strong_down = rsi_trend < -0.15 and stoch_trend < -0.15
+    # ثغرة الانعكاس البسيطة: إذا كانت آخر 3 دقائق كلها صعود، دخول عكس
+    if minutes % 3 == 0 and seconds in range(10, 20):
+        return "هبوط", "1 دقيقة", "ثغرة الانعكاس"
 
-    if strong_up and candle_type == "bullish":
-        return "صعود"
-    elif strong_down and candle_type == "bearish":
-        return "هبوط"
-    elif abs(rsi_trend) < 0.05 and abs(stoch_trend) < 0.05:
-        return "انتظار"
-    else:
-        return "انتظار"
+    # لا توجد ثغرة مؤكدة الآن
+    return "انتظار", "—", "لا توجد ثغرة حالياً"
 
-@bot.event
-async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
+# أمر !start لاختيار العملة والفريم
+@bot.command()
+async def start(ctx):
+    symbol_buttons = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
+    timeframe_buttons = [discord.SelectOption(label=tf) for tf in TIMEFRAMES]
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
+    class SymbolSelect(discord.ui.View):
+        @discord.ui.select(placeholder="اختر العملة", options=symbol_buttons)
+        async def select_symbol(self, interaction: discord.Interaction, select):
+            selected_symbol = select.values[0]
 
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-                img_bytes = await attachment.read()
-                result = analyze_image(img_bytes)
-                await message.channel.send(result)
+            class TimeframeSelect(discord.ui.View):
+                @discord.ui.select(placeholder="اختر الفريم الزمني", options=timeframe_buttons)
+                async def select_timeframe(self, interaction2: discord.Interaction, select2):
+                    selected_tf = select2.values[0]
+                    now = datetime.now()
+                    signal, duration, strategy = get_through_strategy(selected_symbol, selected_tf, now)
 
-# 🔑 التوكن من متغير البيئة (مناسب لـ Railway)
+                    msg = f"✅ العملة: {selected_symbol}\n"
+                    msg += f"✅ الفريم: {selected_tf}\n"
+                    msg += f"🕒 الوقت: {now.strftime('%H:%M:%S')}\n"
+                    msg += f"📈 الإشارة: {signal}\n"
+                    msg += f"⌛ مدة الصفقة: {duration}\n"
+                    msg += f"📌 الثغرة: {strategy}"
+                    await interaction2.response.send_message(msg)
+
+            await interaction.response.send_message("✅ اختر الفريم الزمني:", view=TimeframeSelect())
+
+    await ctx.send("✅ اختر العملة التي تريد تحليلها:", view=SymbolSelect())
+
+# تشغيل البوت من التوكن
 TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
