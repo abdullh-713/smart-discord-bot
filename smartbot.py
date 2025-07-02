@@ -3,41 +3,32 @@ import discord
 from discord.ext import commands
 from datetime import datetime
 
-# إعدادات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# قائمة عملات OTC
 OTC_SYMBOLS = [
     "EURUSD_otc", "GBPUSD_otc", "USDJPY_otc", "NZDUSD_otc", "EURJPY_otc",
     "GBPJPY_otc", "AUDCAD_otc", "EURGBP_otc", "EURNZD_otc", "CADCHF_otc"
 ]
-
-# قائمة الفريمات الزمنية
 TIMEFRAMES = ["5s", "15s", "30s", "1min", "2min", "5min"]
 
-# قاعدة ثغرات مبرمجة يدويًا (مبدئيًا)
 def get_through_strategy(symbol, timeframe, now):
     seconds = now.second
     minutes = now.minute
 
-    # ثغرة التوقيت الثابت: صعود كل 00 أو 30 ثانية
     if seconds in [0, 30]:
         return "صعود", "1 دقيقة", "ثغرة التوقيت الثابت"
-
-    # ثغرة التكرار الزمني: هبوط كل 5 دقائق
     if minutes % 5 == 0 and seconds < 10:
         return "هبوط", "2 دقيقة", "ثغرة التكرار الزمني"
-
-    # ثغرة الانعكاس البسيطة: إذا كانت آخر 3 دقائق كلها صعود، دخول عكس
-    if minutes % 3 == 0 and seconds in range(10, 20):
+    if minutes % 3 == 0 and 10 <= seconds <= 20:
         return "هبوط", "1 دقيقة", "ثغرة الانعكاس"
-
-    # لا توجد ثغرة مؤكدة الآن
     return "انتظار", "—", "لا توجد ثغرة حالياً"
 
-# أمر !start لاختيار العملة والفريم
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
 @bot.command()
 async def start(ctx):
     symbol_buttons = [discord.SelectOption(label=symbol) for symbol in OTC_SYMBOLS]
@@ -67,6 +58,9 @@ async def start(ctx):
 
     await ctx.send("✅ اختر العملة التي تريد تحليلها:", view=SymbolSelect())
 
-# تشغيل البوت من التوكن
+# تأكد من أن المتغير TOKEN مضبوط في Railway
 TOKEN = os.getenv("TOKEN")
-bot.run(TOKEN)
+if not TOKEN:
+    print("❌ لم يتم العثور على توكن البوت في المتغير البيئي.")
+else:
+    bot.run(TOKEN)
