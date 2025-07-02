@@ -5,53 +5,60 @@ import numpy as np
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# إعداد البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def analyze_image(image_path):
+def analyze_candle_image(image_path):
     img = cv2.imread(image_path)
     if img is None:
-        return "❌ الصورة غير واضحة"
+        return "❌ تعذر قراءة الصورة"
 
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    height, width = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # تحليل الشمعة (أخضر = صعود، أحمر = هبوط)
-    green_mask = cv2.inRange(hsv, (35, 60, 60), (85, 255, 255))
-    red_mask1 = cv2.inRange(hsv, (0, 60, 60), (10, 255, 255))
-    red_mask2 = cv2.inRange(hsv, (170, 60, 60), (180, 255, 255))
-    red_mask = red_mask1 | red_mask2
+    # تحليل الألوان (الشموع)
+    green_mask = cv2.inRange(hsv, (35, 40, 40), (85, 255, 255))
+    red_mask1 = cv2.inRange(hsv, (0, 70, 50), (10, 255, 255))
+    red_mask2 = cv2.inRange(hsv, (170, 70, 50), (180, 255, 255))
+    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
 
-    green_strength = cv2.countNonZero(green_mask)
-    red_strength = cv2.countNonZero(red_mask)
+    green_area = cv2.countNonZero(green_mask)
+    red_area = cv2.countNonZero(red_mask)
 
-    # تحليل RSI - نأخذ منطقة معروفة من الصورة (مثلاً أسفل الزاوية اليمنى)
-    rsi_area = img[height-60:height-30, width-110:width-10]
-    rsi_gray = cv2.cvtColor(rsi_area, cv2.COLOR_BGR2GRAY)
-    rsi_brightness = np.mean(rsi_gray)
+    # مؤشر Bollinger Bands - تحليل الحواف
+    edges = cv2.Canny(gray, 50, 150)
+    upper_band_area = edges[:int(edges.shape[0]*0.3), :].sum()
+    lower_band_area = edges[int(edges.shape[0]*0.7):, :].sum()
 
-    # تحليل Bollinger Bands (نقاط قرب الحافة العلوية والسفلية)
-    bb_upper = img[100:110, int(width/2)-20:int(width/2)+20]
-    bb_lower = img[height-110:height-100, int(width/2)-20:int(width/2)+20]
-    bb_up_mean = np.mean(cv2.cvtColor(bb_upper, cv2.COLOR_BGR2GRAY))
-    bb_low_mean = np.mean(cv2.cvtColor(bb_lower, cv2.COLOR_BGR2GRAY))
+    # مؤشر RSI و Stochastic (تحليل مناطق التشبع بالألوان الزرقاء والصفراء)
+    rsi_zone = hsv[gray.shape[0]//2:gray.shape[0], :]
+    blue_rsi = cv2.inRange(rsi_zone, (90, 50, 50), (130, 255, 255))
+    yellow_stochastic = cv2.inRange(rsi_zone, (20, 100, 100), (35, 255, 255))
 
-    # تحليل Stochastic (أخذ من منطقة أسفل الشارت)
-    stoch_area = img[height-90:height-60, width-120:width-20]
-    stoch_gray = cv2.cvtColor(stoch_area, cv2.COLOR_BGR2GRAY)
-    stoch_value = np.mean(stoch_gray)
+    rsi_value = cv2.countNonZero(blue_rsi)
+    stochastic_value = cv2.countNonZero(yellow_stochastic)
 
-    # تحليل استراتيجي باستخدام كل العناصر
-    if green_strength > red_strength * 1.4 and rsi_brightness < 100 and bb_up_mean < 110 and stoch_value < 100:
-        return "📈 صعود"
-    elif red_strength > green_strength * 1.4 and rsi_brightness > 160 and bb_low_mean < 110 and stoch_value > 150:
-        return "📉 هبوط"
+    # الشروط
+    if (
+        green_area > red_area + 3000
+        and lower_band_area > upper_band_area
+        and stochastic_value > 1000
+        and rsi_value < 800
+    ):
+        return "🔼 صعود"
+    
+    elif (
+        red_area > green_area + 3000
+        and upper_band_area > lower_band_area
+        and stochastic_value > 1000
+        and rsi_value > 800
+    ):
+        return "🔽 هبوط"
+
     else:
         return "⏸ انتظار"
 
@@ -60,12 +67,14 @@ async def on_message(message):
     if message.attachments:
         for attachment in message.attachments:
             if attachment.filename.lower().endswith((".jpg", ".jpeg", ".png")):
-                path = f"temp_{attachment.filename}"
-                await attachment.save(path)
-                result = analyze_image(path)
-                await message.channel.send(result)
-                os.remove(path)
+                file_path = f"temp_{attachment.filename}"
+                await attachment.save(file_path)
+
+                decision = analyze_candle_image(file_path)
+                await message.channel.send(decision)
+
+                os.remove(file_path)
+
     await bot.process_commands(message)
 
-# تشغيل البوت
 bot.run(TOKEN)
