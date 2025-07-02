@@ -5,68 +5,80 @@ import numpy as np
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة
+# تحميل التوكن من .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
-# إعداد صلاحيات البوت
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# دالة تحليل الشمعة القادمة بناءً على الألوان والمؤشرات الظاهرة بالرؤية
-def analyze_chart(image_path):
+# دالة تحليل الصورة واتخاذ القرار للشمعة القادمة
+def analyze_candle(image_path):
     img = cv2.imread(image_path)
     if img is None:
-        return "⏸ الصورة غير واضحة"
+        return "⏸"
 
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    # تحليل ألوان الشموع (أخضر وأحمر)
+    # تحليل الشموع بالألوان
     green_mask = cv2.inRange(hsv, np.array([35, 60, 60]), np.array([85, 255, 255]))
-    red_mask1 = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255]))
-    red_mask2 = cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
-    red_mask = red_mask1 | red_mask2
+    red_mask = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255])) | \
+               cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
 
     green_pixels = cv2.countNonZero(green_mask)
     red_pixels = cv2.countNonZero(red_mask)
 
-    # مؤشر RSI (افتراضي أنه موجود في الأسفل بلون بنفسجي/أزرق)
-    rsi_zone = img[-120:-60, 50:300]
-    rsi_level = np.mean(rsi_zone[:, :, 0])  # القناة الزرقاء
+    # RSI (اللون البنفسجي غالبًا في الأسفل)
+    rsi_area = img[-120:-60, 50:300]
+    rsi_mean = np.mean(rsi_area[:, :, 0])  # قناة اللون الأزرق للتقدير التقريبي
 
-    # مؤشر Bollinger Bands (افتراضي في الوسط)
-    bb_zone = img[150:300, 100:600]
-    brightness = np.mean(bb_zone)
+    # Stochastic (خطوط بيضاء وبرتقالية/صفراء)
+    stoch_area = img[-100:-30, 400:700]
+    stoch_brightness = np.mean(stoch_area)
 
-    # القرار النهائي الذكي
-    if green_pixels > red_pixels * 1.4 and rsi_level < 100 and brightness < 110:
-        return "🔼 صعود"
-    elif red_pixels > green_pixels * 1.4 and rsi_level > 130 and brightness > 120:
-        return "🔽 هبوط"
-    elif abs(green_pixels - red_pixels) < 600:
-        return "⏸ انتظار"
+    # Bollinger Bands (تحديد مكان السعر)
+    bb_area = img[150:300, 100:600]
+    bb_brightness = np.mean(bb_area)
+
+    # منطق القرار النهائي
+    if (
+        green_pixels > red_pixels * 1.2
+        and rsi_mean < 95
+        and stoch_brightness < 105
+        and bb_brightness < 105
+    ):
+        return "🔼"  # صعود
+
+    elif (
+        red_pixels > green_pixels * 1.2
+        and rsi_mean > 130
+        and stoch_brightness > 130
+        and bb_brightness > 130
+    ):
+        return "🔽"  # هبوط
+
     else:
-        return "⏸ غير كافٍ لاتخاذ قرار"
+        return "⏸"  # انتظار
 
-# عند تشغيل البوت
+# جاهزية البوت
 @bot.event
 async def on_ready():
-    print(f"✅ البوت يعمل الآن باسم: {bot.user}")
+    print(f"✅ البوت يعمل الآن: {bot.user}")
 
-# عند استقبال صورة في القناة
+# استقبال وتحليل الصور
 @bot.event
 async def on_message(message):
     if message.attachments:
         for attachment in message.attachments:
-            if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg")):
-                file_path = f"temp_{attachment.filename}"
-                await attachment.save(file_path)
+            if attachment.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                path = f"temp_{attachment.filename}"
+                await attachment.save(path)
 
-                decision = analyze_chart(file_path)
-                await message.channel.send(decision)
+                result = analyze_candle(path)
+                await message.channel.send(result)
 
-                os.remove(file_path)
+                os.remove(path)
 
     await bot.process_commands(message)
 
